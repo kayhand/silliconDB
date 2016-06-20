@@ -66,6 +66,3 @@ TCPStream* TCPAcceptor::accept()
     return new TCPStream(sd, &address);
 }
 
-
-
-
