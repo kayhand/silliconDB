@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <list>
+#include <unordered_map>
 
 using namespace std;
 
@@ -11,12 +12,14 @@ template <typename T> class WorkQueue
     list<T> m_queue;
     int start_size;
     int mq_id;
+    std::unordered_map<int, std::pair<int,int>> *partMap;  
 
     public:
         WorkQueue(){}
-        WorkQueue(int s_size, int q_id) {
+        WorkQueue(int s_size, int q_id, std::unordered_map<int, std::pair<int,int>> &p_map) {
             start_size = s_size;
             mq_id = q_id;
+	    partMap = &p_map;
         }
         ~WorkQueue() {}
 
@@ -38,6 +41,10 @@ template <typename T> class WorkQueue
 
     int getId(){
         return mq_id;
+    }
+
+    std::unordered_map<int, std::pair<int,int>>& getMap(){
+	return *partMap;
     }
 };
 

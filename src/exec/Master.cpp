@@ -6,17 +6,20 @@
 #include "../thread/Thread.h"
 #include "util/WorkQueue.h"
 #include "../network/server/TCPAcceptor.h"
+#include "../data/DataLoader.h"
+#include "../util/Partitioner.h"
 
 class WorkItem
 {
     int t_start, t_end;
     public:
         WorkItem(){}
-        WorkItem(int start, int end) : t_start(start) , t_end(end){}
         ~WorkItem() {}
 
     //Define a scan function here ?
-    void printRange() { printf("Scanning from %d to %d \n", t_start, t_end); } 
+    void printRange(int start, int end) { 
+	printf("Scanning from %d to %d \n", start, end);
+    } 
 };
 
 class ConnectionHandler : public Thread
@@ -42,7 +45,9 @@ class ConnectionHandler : public Thread
                 //item->function();
                 WorkItem item = scan_queue.remove();
                 printf("thread %lu, loop %d - got one item...\n\n", (long unsigned int) self(), i);
-                item.printRange();
+		int start = scan_queue.getMap()[scan_queue.getId()].first;
+		int end = scan_queue.getMap()[scan_queue.getId()].second;
+                item.printRange(start, end);
             }
             t_stream->send("", 0);
             return NULL;
@@ -57,31 +62,29 @@ class ConnectionHandler : public Thread
 
 int main(int argc, char** argv)
 {
-    if ( argc < 3 || argc > 4 ) {
-        printf("usage: %s <workers> <port> <ip>\n", argv[0]);
+    if ( argc != 5 ) {
+        printf("usage: %s <workers> <port> <ip> <fileName>\n", argv[0]);
         exit(-1);
     }
 
     int workers = atoi(argv[1]);
     int port = atoi(argv[2]);
-    std::string ip = "localhost";
-    //if (argc == 4) { 
-    //  ip = argv[3];
-    //}
+    string ip = argv[3];
+    string fileName = argv[4];
+    DataLoader data_loader(fileName);
+    data_loader.compressTable();
+    int numOfElements = data_loader.compressedTable->getTable()->nb_lines;
     
     TCPAcceptor* connectionAcceptor;
-    if (ip.length() > 0) {
-        connectionAcceptor = new TCPAcceptor(port, (char*)ip.c_str());
-    }
-    else {
-        connectionAcceptor = new TCPAcceptor(port);        
-    }                                        
+    connectionAcceptor = new TCPAcceptor(port, (char*)ip.c_str());
     if (!connectionAcceptor || connectionAcceptor->start() != 0) {
         printf("Could not create an connection acceptor\n");
         exit(1);
     }
-    ip.clear();
 
+    Partitioner part;
+    part.roundRobin(numOfElements, workers);
+  
     std::vector<WorkQueue<WorkItem>> scan_queues;
     scan_queues.reserve(50);
     std::vector<ConnectionHandler*> conn_handlers;
@@ -89,13 +92,13 @@ int main(int argc, char** argv)
 
     //Create the thread pool
     for(int i = 0; i < workers; i++){
-        WorkQueue<WorkItem> scan_queue(2, i); 
+        WorkQueue<WorkItem> scan_queue(2, i, part.getMap()); 
         scan_queues.push_back(scan_queue);
         ConnectionHandler *handler = new ConnectionHandler(scan_queues.back());
         conn_handlers.push_back(handler);
     }
 
-    int numberOfConnections = 2;
+    int numberOfConnections = 1;
     TCPStream* connection;
     while(numberOfConnections > 0){
         connection = connectionAcceptor->accept();
@@ -106,8 +109,8 @@ int main(int argc, char** argv)
 
         printf("Now pushing works into the queues ...\n");
         //Client requested connection
-        WorkItem item(0, 100);
-        WorkItem item2(100, 200);
+        WorkItem item;
+        WorkItem item2;
         for(WorkQueue<WorkItem> &queue : scan_queues){
             printf("Pushing into queue %d ...\n", queue.getId());
             queue.add(item);
