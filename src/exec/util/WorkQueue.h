@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <list>
 #include <unordered_map>
+#include "../../data/DataLoader.h"
 
 using namespace std;
 
@@ -13,13 +14,15 @@ template <typename T> class WorkQueue
     int start_size;
     int mq_id;
     std::unordered_map<int, std::pair<int,int>> *partMap;  
+    DataCompressor *dataComp;
 
     public:
         WorkQueue(){}
-        WorkQueue(int s_size, int q_id, std::unordered_map<int, std::pair<int,int>> &p_map) {
+        WorkQueue(int s_size, int q_id, std::unordered_map<int, std::pair<int,int>> &p_map, DataCompressor *dataCompressor){
             start_size = s_size;
             mq_id = q_id;
 	    partMap = &p_map;
+	    dataComp = dataCompressor;
         }
         ~WorkQueue() {}
 
@@ -45,6 +48,10 @@ template <typename T> class WorkQueue
 
     std::unordered_map<int, std::pair<int,int>>& getMap(){
 	return *partMap;
+    }
+
+    DataCompressor* getCompressor(){
+        return dataComp;
     }
 };
 

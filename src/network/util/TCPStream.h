@@ -2,6 +2,7 @@
 #define __tcpstream_h__
 
 #include <sys/types.h>
+#include <netdb.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <string>

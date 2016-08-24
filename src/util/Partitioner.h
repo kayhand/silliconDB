@@ -7,12 +7,16 @@ class Partitioner {
     public:
 	Partitioner();
 	~Partitioner();
-        void roundRobin(int numberOfElements, int numberOfPartitions);
+        void roundRobin(int numberOfPartitions, std::string filePath);
 	std::unordered_map<int, std::pair<int,int>>& getMap(){
             return partitionMap;
 	}
+	int getEls(){
+	    return num_of_elements;
+	}
     private:
 	std::unordered_map<int, std::pair<int,int> > partitionMap; //ThreadId-><start,end> pair
+	int num_of_elements = 0;
 };
 
 #endif

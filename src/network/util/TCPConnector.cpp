@@ -1,4 +1,5 @@
 #include <string.h>
+#include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include "TCPConnector.h"

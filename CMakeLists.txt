@@ -4,6 +4,10 @@ project(silliconDB)
 #set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules)
 #set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAG} -g -DLINUX -DDEBUG -std=c++11 -Wall -Wextra -Werror")
+INCLUDE_DIRECTORIES(/opt/dax)
+LINK_DIRECTORIES(/opt/dax)
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAG} -m64 -g -DDEBUG -std=c++1y -lnsl -Wall -Wextra -Werror")
 
 add_subdirectory(src)
+

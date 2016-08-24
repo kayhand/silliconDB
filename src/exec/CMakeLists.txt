@@ -1,6 +1,11 @@
 add_executable(sDB_master Master.cpp)
 
-target_link_libraries(sDB_master
+#link_directories(/opt/dax)
+#include_directories(/opt/dax)
+
+target_link_libraries(
+    sDB_master
+#    -ldax
     data_lib
     network_util
     server_lib

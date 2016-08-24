@@ -2,6 +2,7 @@
 #define __dataloader_h__
 
 #include "DataCompressor.h"
+#include "../util/Partitioner.h"
 
 class DataLoader{
     string fileName;
@@ -15,11 +16,14 @@ class DataLoader{
 	}
         DataCompressor *compressedTable;
 
-    void compressTable(){
-        compressedTable = new DataCompressor(fileName);
+   void parseTable(Partitioner &part){
+        compressedTable = new DataCompressor(fileName, part);
         compressedTable->parse();
+   }
+   void compressTable(){
         compressedTable->compress();    
-    }
+   }
+
 };
 
 #endif
