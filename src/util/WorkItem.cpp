@@ -2,13 +2,13 @@
 #include "WorkItem.h"
 #include <cstring>
 
-WorkItem::WorkItem()
-{
-}
+//WorkItem::WorkItem()
+//{
+//}
 
-WorkItem::~WorkItem()
-{
-}
+//WorkItem::~WorkItem()
+//{
+//}
 
 #ifdef __sun 
 void WorkItem::scan(DataCompressor *dataComp, int curPart)
@@ -99,8 +99,9 @@ void WorkItem::scan(DataCompressor *dataComp, int curPart)
 	bit_vector[i] = local_res;
         local_res = 0;
     }
+    printf("\n");
     printf("Count: %d\n", count);
-    agg(*compTable, bit_vector, curPart, dataComp->getCompLines(curPart), dataComp->getPartitioner()->getMap().at(curPart).first);
+    agg(compTable, bit_vector, curPart, dataComp->getCompLines(curPart), dataComp->getPartitioner()->getMap().at(curPart).first, dataComp->getPartitioner()->getMap().at(curPart).second);
     //int remainder = numberOfElements - (numberOfSegments - 1) * (numberOfElements / (numberOfSegments - 1));
     int remainder = WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE); 
     printf("Remainder %d\n", remainder);
@@ -110,14 +111,14 @@ void WorkItem::scan(DataCompressor *dataComp, int curPart)
 }
 #endif
 
-void WorkItem::agg(table &compTable, uint64_t *bit_vector, int curPart, int compLines, int dataStart){
+void WorkItem::agg(table *compTable, uint64_t *bit_vector, int curPart, int compLines, int dataStart, int dataEnd){
     std::unordered_map<uint64_t, std::tuple<int, uint64_t>>  local_ht;    
     //<(rf + ls), (l_q, l_ext)> 
     //Columns: l_quantity, l_extprice, l_discount, l_tax, l_rf, l_ls 
     vector<int> columns = {8, 9, 4, 5, 6, 7};
     vector<int> actual_columns;
     for(int colId : columns)
-        actual_columns.push_back(colId + curPart * compTable.nb_columns);
+        actual_columns.push_back(colId + curPart * compTable->nb_columns);
 
     vector<int> ind_arr = Helper::createIndexArray(bit_vector, dataStart, compLines);
     //for(int curInd : actual_columns)
@@ -125,15 +126,18 @@ void WorkItem::agg(table &compTable, uint64_t *bit_vector, int curPart, int comp
     //printf("\n");
 
     tuple <int, uint64_t> value = make_tuple(0, 0);
+    local_ht.reserve(100);
     //sum(l_quantity), sum(l_extprice)
 
     for(int curInd : ind_arr){
         uint64_t key = 0;
         int baseId = 0;
+	if(curInd > dataEnd)
+	    break;
         for(int &colId : actual_columns){
-            baseId = colId % compTable.nb_columns;
-            column *baseCol = &compTable.columns[baseId];
-            column *curCol = &compTable.columns[colId];
+            baseId = colId % compTable->nb_columns;
+            column *baseCol = &(compTable->columns[baseId]);
+            column *curCol = &(compTable->columns[colId]);
             if(baseId == 8){
                 key = curCol->data[curInd];
                 //printf("%d. %s | ", curInd, baseCol->dict[(uint32_t) key].c_str());
@@ -141,13 +145,13 @@ void WorkItem::agg(table &compTable, uint64_t *bit_vector, int curPart, int comp
             }
             else if(baseId == 9){
                 key |= curCol->data[curInd];
-                //printf("%s -> ", baseCol->dict[(uint32_t) key].c_str());
-                if(local_ht.begin() != local_ht.end() && local_ht.find(key) != local_ht.end()){
+                //printf("%s -> \n", baseCol->dict[(uint32_t) key].c_str());
+                if(local_ht.find(key) == local_ht.end()){
                     local_ht.emplace(key, value);
                 }
             }
             else if(baseId == 4){
-                if(local_ht.begin() != local_ht.end() && local_ht.find(key) != local_ht.end()){
+                if(local_ht.find(key) != local_ht.end()){
                 	get<0>(local_ht.at(key)) += baseCol->i_dict[curCol->data[curInd]];
 		}
                 //printf(" <(%d,%d), ", baseCol->i_dict[curCol->data[curInd]], get<0>(local_ht[key]));
@@ -158,10 +162,11 @@ void WorkItem::agg(table &compTable, uint64_t *bit_vector, int curPart, int comp
             }
         }
     }
+
     for(auto &curr : local_ht){
         uint64_t key = curr.first;
-        string first_part = compTable.columns[8].dict[(uint32_t) (key >> 32)];
-        string second_part = compTable.columns[9].dict[(uint32_t) key];
+        string first_part = compTable->columns[8].dict[(uint32_t) (key >> 32)];
+        string second_part = compTable->columns[9].dict[(uint32_t) key];
 
         printf("(%s | %s) -> <%d, %lu>\n", first_part.c_str(), second_part.c_str(), get<0>(curr.second), get<1>(curr.second));
     }

@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 #include <unordered_map>
+
 #include "../util/Partitioner.h"
 
 #define WORD_SIZE 64
@@ -26,7 +27,7 @@ struct column{
     }data_type;
 
     uint32_t *data = 0;
-    uint64_t *compressed = 0; //compressed bit vector
+    uint64_t *compressed ; //compressed bit vector
 
     int num_of_bits = -1; //number of bits used
     int column_id = -1;
@@ -88,6 +89,7 @@ class DataCompressor{
     	void compress();
     	void actual_compression(column &c);
 	void bw_compression(column &c);
+	void getNumberOfBits();
 
     	table *getTable(){
     		return &t;

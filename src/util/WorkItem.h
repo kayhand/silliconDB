@@ -11,10 +11,10 @@ extern "C"{
 
 class WorkItem {
     public:
-        WorkItem();
-        ~WorkItem();
+//        WorkItem();
+//        ~WorkItem();
 	void scan(DataCompressor *dataComp, int curPart); 
-	void agg(table &compTable, uint64_t *bit_vector, int curPart, int compLines, int dataStart);
+	void agg(table *compTable, uint64_t *bit_vector, int curPart, int compLines, int dataStart, int dataEnd);
 	#ifdef __sun
 		dax_result_t scan_res;
 	#endif
