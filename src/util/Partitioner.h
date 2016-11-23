@@ -14,9 +14,16 @@ class Partitioner {
 	int getEls(){
 	    return num_of_elements;
 	}
+	int assignNextPartition(){
+	    nextPartition++;
+	    return nextPartition;
+	}
+
     private:
 	std::unordered_map<int, std::pair<int,int> > partitionMap; //ThreadId-><start,end> pair
 	int num_of_elements = 0;
+	int nextPartition = -1;
+
 };
 
 #endif

@@ -1,27 +1,22 @@
 
-#include "WorkItem.h"
+#include "Query3.h"
 #include <cstring>
 #include <sys/time.h>
 
-WorkItem::WorkItem()
+Query3::Query3()
 {
 }
 
-WorkItem::WorkItem(bool type)
+Query3::Query3(bool type)
 {
     this->type = type;
 }
 
-WorkItem::~WorkItem()
-{
-}
+Query3::~Query3(){}
 
 #ifdef __sun 
-void WorkItem::scan_hw(DataCompressor *dataComp, int curPart)
+void Query3::linescan_hw(DataCompressor *dataComp, int curPart, dax_context_t **ctx)
 { 
-    dax_context_t *ctx;
-    dax_thread_init(1, 1, 0, NULL, &ctx);
-
     table *compTable = dataComp->getTable();
     uint64_t comp_predicate = 0;
     comp_predicate = compTable->columns[10].keys["1996-01-10"];
@@ -67,7 +62,8 @@ void WorkItem::scan_hw(DataCompressor *dataComp, int curPart)
 
     hrtime_t t_start, t_end;
     t_start = gethrtime();
-    scan_res = dax_scan_value(ctx, 0, &src, &dst, DAX_LT, &predicate);
+    scan_res = dax_scan_value(*ctx, 0, &src, &dst, DAX_LT, &predicate);
+    printf("Dax scan call returned %d\n", scan_res.status);
     t_end = gethrtime();
     long long t_res = t_end - t_start;
 
@@ -76,18 +72,15 @@ void WorkItem::scan_hw(DataCompressor *dataComp, int curPart)
     //fprintf(pFile, "%lld\n", t_res);
     //fclose(pFile);
     int remainder = WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE); 
-    printf("DAX Scan took %llu ns!\n", t_res);
+    printf("DAX Scan for lineitem took %llu ns!\n", t_res);
     printf("Count: %lu\n", scan_res.count - remainder);
 
-    //int remainder = WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE); 
-    //printf("Count: %lu, r: %d\n", scan_res.count - remainder, remainder);
-    agg(compTable, (uint64_t *) dst.data, curPart, dataComp->getCompLines(curPart), col->end - col->start, col->num_of_bits + 1);
     free(src.data);
     free(dst.data);
 } 
 #endif
 
-void WorkItem::scan_sw(DataCompressor *dataComp, int curPart)
+void Query3::linescan_sw(DataCompressor *dataComp, int curPart)
 { 
     table *compTable = dataComp->getTable();
     int ind = 10 + curPart * compTable->nb_columns;
@@ -133,14 +126,121 @@ void WorkItem::scan_sw(DataCompressor *dataComp, int curPart)
     //fprintf(pFile, "%lld\n", t_res);
     //fclose(pFile);
 
-    printf("SW Scan took %llu ns!\n", t_res);
+    printf("SW Scan for lineitem took %llu ns!\n", t_res);
     int remainder = WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE); 
     printf("Count: %d\n", count - remainder);
-    agg(compTable, bit_vector, curPart, dataComp->getCompLines(curPart), col->end - col->start, 0);
     delete[] bit_vector;
 }
 
-void WorkItem::agg(table *compTable, uint64_t *bit_vector, int curPart, int compLines, int dataEnd, int numOfBits){
+#ifdef __sun 
+void Query3::orderscan_hw(DataCompressor *dataComp, int curPart, dax_context_t **ctx)
+{ 
+    table *compTable = dataComp->getTable();
+    uint64_t comp_predicate = 0;
+    comp_predicate = compTable->columns[10].keys["1996-01-10"];
+    /*if(curPart == 0){
+        for(auto &curr : compTable->columns[10].keys)
+	    printf("%s -> %d\n", curr.first.c_str(), curr.second);    
+    }*/
+
+    int ind = 10 + curPart * compTable->nb_columns;
+    column *col = &(compTable->columns[ind]);
+
+    dax_int_t predicate;
+    dax_vec_t src;
+    dax_vec_t dst;
+
+    memset(&predicate, 0, sizeof(dax_int_t));
+    memset(&src, 0, sizeof(dax_vec_t));
+    memset(&dst, 0, sizeof(dax_vec_t));
+
+    int start = col->start; 
+    int end = col->end; 
+
+    int num_of_els = end - start + 1;
+    if(num_of_els % 64 != 0)
+        num_of_els = ((num_of_els / 64) + 1) * 64;
+
+    src.elements = num_of_els;
+    src.format = DAX_BITS;
+    src.elem_width = col->num_of_bits + 1;
+
+    src.data = malloc(src.elements * src.elem_width);
+    src.data = col->compressed;
+
+    predicate.format = DAX_BITS;
+    predicate.elem_width = src.elem_width;
+    predicate.dword[2] = comp_predicate;
+
+    dst.elements = src.elements;
+    dst.offset = 0;
+    dst.format = DAX_BITS;
+    dst.elem_width = 1;
+    dst.data = memalign(8192, DAX_OUTPUT_SIZE(dst.elements, dst.elem_width));
+
+    hrtime_t t_start, t_end;
+    t_start = gethrtime();
+    scan_res = dax_scan_value(*ctx, 0, &src, &dst, DAX_LT, &predicate);
+    t_end = gethrtime();
+    long long t_res = t_end - t_start;
+
+    //FILE *pFile;
+    //pFile = fopen("dax_results.txt", "a");
+    //fprintf(pFile, "%lld\n", t_res);
+    //fclose(pFile);
+    int remainder = WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE); 
+    printf("DAX Scan for orders took %llu ns!\n", t_res);
+    printf("Count: %lu\n", scan_res.count - remainder);
+
+    //int remainder = WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE); 
+    //printf("Count: %lu, r: %d\n", scan_res.count - remainder, remainder);
+    agg(compTable, (uint64_t *) dst.data, curPart, dataComp->getCompLines(curPart), col->end - col->start, col->num_of_bits + 1);
+    free(src.data);
+    free(dst.data);
+} 
+#endif
+
+void Query3::orderscan_sw()
+{ 
+}
+
+#ifdef __sun 
+void Query3::join_hw(dax_context_t **ctx, dax_vec_t *src, dax_vec_t *bit_map, dax_vec_t *l_scan_res)
+{ 
+    dax_result_t join_res;
+
+    dax_vec_t dst, dst2;
+    dst.elements = src->elements;
+    dst.offset = 0;
+    dst.format = DAX_BITS;
+    dst.elem_width = 1;
+    dst.data = memalign(8192, DAX_OUTPUT_SIZE(dst.elements, dst.elem_width));
+
+    dst2 = dst;
+
+    hrtime_t t_start, t_end;
+    t_start = gethrtime();
+    join_res = dax_translate(*ctx, 0, src, &dst, bit_map, src->elem_width);
+    join_res = dax_and(*ctx, 0, &dst, l_scan_res, &dst2);
+    t_end = gethrtime();
+    long long t_res = t_end - t_start;
+
+    //FILE *pFile;
+    //pFile = fopen("dax_results.txt", "a");
+    //fprintf(pFile, "%lld\n", t_res);
+    //fclose(pFile);
+    printf("Join between lineitem and orders took %llu ns!\n", t_res);
+    printf("Count: %lu\n", join_res.count);
+
+    free(src->data);
+    free(dst.data);
+} 
+#endif
+
+void Query3::join_sw(){
+}
+
+void Query3::agg(table *compTable, uint64_t *bit_vector, int curPart, int compLines, int dataEnd, int numOfBits){
     std::unordered_map<uint64_t, std::tuple<int, uint64_t>>  local_ht;    
     //<(rf + ls), (l_q, l_ext)> 
     //Columns: l_quantity, l_extprice, l_discount, l_tax, l_rf, l_ls 

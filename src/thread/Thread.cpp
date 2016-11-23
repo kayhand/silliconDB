@@ -68,7 +68,7 @@ int Thread::setAffinity(int cpuid)
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(cpuid, &cpuset);
-    printf("Affinity set to core number %d\n", cpuid);
+    //printf("Affinity set to core number %d\n", cpuid);
     result  = pthread_setaffinity_np(tid, sizeof(cpu_set_t), &cpuset);
     return result;
 #endif 

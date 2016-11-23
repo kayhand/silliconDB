@@ -22,7 +22,8 @@ int main(int argc, char** argv)
         stream->send(query.c_str(), query.size());
         printf("sent - %s\n", query.c_str());
         len = stream->receive(line, sizeof(line));
-        line[len] = 0;
+	if(len < 0)
+            line[0] = 0;
         printf("received - %s\n", line);
         delete stream;
     }

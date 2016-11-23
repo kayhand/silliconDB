@@ -4,13 +4,6 @@
 using namespace std;
 std::vector<std::string> explode(std::string const & s, char delim);
 
-/* (
- * Opens the file once and checks the number of lines and the type of 
- * each column.
- * Allocates enough memory to store all the data present in the file.
- *
- */
-
 DataCompressor::DataCompressor(){
 
 }
@@ -186,16 +179,19 @@ void DataCompressor::parse(){
 	int curPartSize = getPartSize(part_id); //How many data elements in the current part
         cur_col->data = new uint32_t[curPartSize];
 	
+	int curInd = 0;
 	for(auto &curPair : cur_col->i_pairs){
-		cur_col->data[curPair.second] = t.columns[actual_col].i_keys[curPair.first];
+		cur_col->data[curInd++] = t.columns[actual_col].i_keys[curPair.first];  //Each partition's data should start from index 0
 	}
 
+	curInd = 0;
 	for(auto &curPair : cur_col->d_pairs){
-		cur_col->data[curPair.second] = t.columns[actual_col].d_keys[curPair.first];
+		cur_col->data[curInd++] = t.columns[actual_col].d_keys[curPair.first];
 	}
 
+	curInd = 0;
 	for(auto &curPair : cur_col->str_pairs){
-		cur_col->data[curPair.second] = t.columns[actual_col].keys[curPair.first];
+		cur_col->data[curInd++] = t.columns[actual_col].keys[curPair.first];
 	}
     }
 }
@@ -209,7 +205,10 @@ void DataCompressor::bw_compression(column &c){
     int rows = c.num_of_bits + 1;
 
     int shift_amount = 0;
-    for(int i = c.start ; i <= c.end; i++){	    
+    int p_size = c.end - c.start + 1;
+    int curInd;
+
+    for(int i = 0 ; i < p_size; i++){	    
 	newVal = c.data[i];
         curSegment = values_written / c.codes_per_segment;
         if(curSegment >= c.num_of_segments)
@@ -220,25 +219,27 @@ void DataCompressor::bw_compression(column &c){
         }
         rowId = codes_written % (c.num_of_bits + 1);
 	shift_amount = (codes_written / (c.num_of_bits + 1)) * (c.num_of_bits + 1);
-	//if(c.column_id == 10 && rowId == 0)
+	//if(c.column_id == 49)
 	    //printf("CurVal: %lu, id: %d \n", newVal, i);
 
 	newVal <<= (WORD_SIZE - (c.num_of_bits + 1));
 	newVal >>= shift_amount;
 
+	curInd = curSegment * rows + rowId;
         if(codes_written < (c.num_of_bits + 1)){
-	    c.compressed[curSegment * rows + rowId] = 0;
-	    c.compressed[curSegment * rows + rowId] = newVal;
+	    c.compressed[curInd] = 0;
+	    c.compressed[curInd] = newVal;
         }
         else{
-            curVal = c.compressed[curSegment * rows + rowId];
-            c.compressed[curSegment * rows + rowId] = curVal | newVal;
+            curVal = c.compressed[curInd];
+            c.compressed[curInd] = curVal | newVal;
         }
         values_written++;
         codes_written++;
         prevSegment = curSegment;
+    	//if(c.column_id == 49)
+	    //printf("Ind:%d Line val: %lu\n", curInd, c.compressed[curInd]);
     }
-
     /* 
     if(c.column_id != 10)
 	return;
@@ -308,6 +309,8 @@ void DataCompressor::getNumberOfBits(){
 	count = distinct_keys[actual_col];
 	round = ceil(log2(count));	
 	n_bits = ceil(log2(round));
+	if(pow(2, n_bits) == round)
+	    n_bits++;
 	n_bits = pow(2, n_bits) - 1;
         t.columns[col].num_of_bits = n_bits;
     }
@@ -320,7 +323,7 @@ void DataCompressor::compress(){
 
 	//int part_id = col / t.nb_columns;
 	//int compLines = getCompLines(part_id);
-        cur_col->compressed = new uint64_t[cur_col->num_of_segments * (cur_col->num_of_bits + 1)];
+        cur_col->compressed = new uint64_t[cur_col->num_of_segments * (cur_col->num_of_bits + 1)]();
         //actual_compression(t.columns[col]);
         bw_compression(*cur_col);
     }

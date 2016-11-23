@@ -1,5 +1,4 @@
 add_subdirectory(data)
 add_subdirectory(exec)
 add_subdirectory(network)
-add_subdirectory(thread)
 add_subdirectory(util)
