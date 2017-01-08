@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 #include <unordered_map>
+#include <bitset>
 
 #include "../util/Partitioner.h"
 
@@ -58,6 +59,7 @@ struct column{
 struct table{
     int nb_columns;
     int nb_lines;
+    int num_of_segments = 0;
     column *columns;
     unordered_map<uint64_t, int> keyMap; //For aggregation keys use a mapping for each key to avoid concat costs
 };
@@ -65,25 +67,24 @@ struct table{
 class DataCompressor{
     private:
     	struct table t;
+    	int t_id;
     	string path;
-    	int p_size = 1;
+    	int num_of_parts = 1;
     	Partitioner *partitioner;
 	int* distinct_keys;
-    	
+	uint64_t* bit_vector;
+
     public:
-	DataCompressor();
-    	DataCompressor(string filename, Partitioner &partitioner);
+    	DataCompressor(string filename, int t_id, Partitioner &partitioner);
 
 	//Copy constructor
 	DataCompressor(const DataCompressor& source);
-
 	//Overloaded assigment
 	DataCompressor& operator=(const DataCompressor& source);
-
 	//Destructor
     	~DataCompressor();
-
     	
+	void createTable();
     	void parse();
 	void createColumns();
     	void compress();
@@ -95,7 +96,7 @@ class DataCompressor{
     		return &t;
     	}
     	int getPartSize(int p_id){
-    		return (partitioner->getMap().at(p_id).second - partitioner->getMap().at(p_id).first + 1);
+		return partitioner->getPartitionSize(p_id);
 	}
 	int getCompLines(int p_id){
 		return ceil(getPartSize(p_id) / 64.0);
@@ -103,5 +104,8 @@ class DataCompressor{
 	Partitioner *getPartitioner(){
 		return partitioner;
 	}
-};
 
+	uint64_t* getBitVector(){
+	    return bit_vector;
+	}
+};

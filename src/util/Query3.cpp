@@ -1,7 +1,7 @@
-
 #include "Query3.h"
 #include <cstring>
 #include <sys/time.h>
+#include <bitset>
 
 Query3::Query3()
 {
@@ -9,7 +9,7 @@ Query3::Query3()
 
 Query3::Query3(bool type)
 {
-    this->type = type;
+    this->type = type; 
 }
 
 Query3::~Query3(){}
@@ -60,20 +60,22 @@ void Query3::linescan_hw(DataCompressor *dataComp, int curPart, dax_context_t **
     dst.elem_width = 1;
     dst.data = memalign(8192, DAX_OUTPUT_SIZE(dst.elements, dst.elem_width));
 
-    hrtime_t t_start, t_end;
-    t_start = gethrtime();
-    scan_res = dax_scan_value(*ctx, 0, &src, &dst, DAX_LT, &predicate);
-    printf("Dax scan call returned %d\n", scan_res.status);
-    t_end = gethrtime();
-    long long t_res = t_end - t_start;
+    //hrtime_t t_start, t_end;
+    //t_start = gethrtime();
+    dax_result_t scan_res = dax_scan_value(*ctx, 0, &src, &dst, DAX_GT, &predicate);
+    if(scan_res.status != 0)
+        printf("Dax Error! %d\n", scan_res.status);
+    //t_end = gethrtime();
+    //long long t_res = t_end - t_start;
 
     //FILE *pFile;
     //pFile = fopen("dax_results.txt", "a");
     //fprintf(pFile, "%lld\n", t_res);
     //fclose(pFile);
-    int remainder = WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE); 
-    printf("DAX Scan for lineitem took %llu ns!\n", t_res);
-    printf("Count: %lu\n", scan_res.count - remainder);
+    //printf("Count (lineitem): %lu  -- DAX -- %llu \n", scan_res.count, t_res);
+
+    uint64_t* bit_vector = (dataComp->getBitVector() + curPart * col->num_of_segments); 
+    memcpy(bit_vector, dst.data, col->num_of_segments * 8);
 
     free(src.data);
     free(dst.data);
@@ -87,30 +89,32 @@ void Query3::linescan_sw(DataCompressor *dataComp, int curPart)
     column *col = &(compTable->columns[ind]);
 
     uint64_t predicate = compTable->columns[10].keys["1996-01-10"];
-    uint64_t upper_bound = (0 << col->num_of_bits) | predicate; 
+    uint64_t data_vector = 0;
+    uint64_t lower_bound = (0 << col->num_of_bits) | predicate; //Y vector 
     uint64_t mask = (0 << col->num_of_bits) | (uint64_t) (pow(2, col->num_of_bits) - 1);
 
     int i, j;
     for(i = 0; i < WORD_SIZE / (col->num_of_bits + 1) - 1; i++){
-        upper_bound |= (upper_bound << (col->num_of_bits + 1));
+        lower_bound |= (lower_bound << (col->num_of_bits + 1));
         mask |= (mask << (col->num_of_bits + 1));
     }
 
+    uint64_t upper_bound = lower_bound;
     uint64_t cur_result;
     int count = 0;
     int total_lines = col->num_of_bits + 1; 
     uint64_t local_res = 0;
-    uint64_t* bit_vector = new uint64_t[col->num_of_segments];
-    //long long res;
-    //res = tick();
+    uint64_t* bit_vector = (dataComp->getBitVector() + curPart * col->num_of_segments); 
         
-    hrtime_t t_start, t_end;
-    t_start = gethrtime();
+  //  hrtime_t t_start, t_end;
+//    t_start = gethrtime();
+
+    /* GREATER THAN OPERATOR */
     for(i = 0; i < col->num_of_segments; i++){
         for(j = 0; j < total_lines; j++){
-            cur_result = col->compressed[i * total_lines + j];
-            cur_result = cur_result ^ mask;
-            cur_result += upper_bound;
+            data_vector = col->compressed[i * total_lines + j];
+            cur_result = upper_bound ^ mask;
+            cur_result += data_vector;
             cur_result = cur_result & ~mask;
             count += __builtin_popcountl(cur_result);
             local_res = local_res | (cur_result >> j); 
@@ -118,18 +122,17 @@ void Query3::linescan_sw(DataCompressor *dataComp, int curPart)
 	bit_vector[i] = local_res;
         local_res = 0;
     }
-    t_end = gethrtime();
-    long long t_res = t_end - t_start;
+ 
+    
+  //  t_end = gethrtime();
+    //long long t_res = t_end - t_start;
 
     //FILE *pFile;
     //pFile = fopen("sw_results.txt", "a");
     //fprintf(pFile, "%lld\n", t_res);
     //fclose(pFile);
 
-    printf("SW Scan for lineitem took %llu ns!\n", t_res);
-    int remainder = WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE); 
-    printf("Count: %d\n", count - remainder);
-    delete[] bit_vector;
+//    printf("Count (lineitem): %d -- SW -- %llu \n", count, t_res);
 }
 
 #ifdef __sun 
@@ -137,13 +140,13 @@ void Query3::orderscan_hw(DataCompressor *dataComp, int curPart, dax_context_t *
 { 
     table *compTable = dataComp->getTable();
     uint64_t comp_predicate = 0;
-    comp_predicate = compTable->columns[10].keys["1996-01-10"];
+    comp_predicate = compTable->columns[4].keys["1996-01-10"];
     /*if(curPart == 0){
         for(auto &curr : compTable->columns[10].keys)
 	    printf("%s -> %d\n", curr.first.c_str(), curr.second);    
     }*/
 
-    int ind = 10 + curPart * compTable->nb_columns;
+    int ind = 4 + curPart * compTable->nb_columns;
     column *col = &(compTable->columns[ind]);
 
     dax_int_t predicate;
@@ -177,51 +180,139 @@ void Query3::orderscan_hw(DataCompressor *dataComp, int curPart, dax_context_t *
     dst.format = DAX_BITS;
     dst.elem_width = 1;
     dst.data = memalign(8192, DAX_OUTPUT_SIZE(dst.elements, dst.elem_width));
+    //dst.data = &bit_vector;
 
-    hrtime_t t_start, t_end;
-    t_start = gethrtime();
-    scan_res = dax_scan_value(*ctx, 0, &src, &dst, DAX_LT, &predicate);
-    t_end = gethrtime();
-    long long t_res = t_end - t_start;
+    //hrtime_t t_start, t_end;
+    //t_start = gethrtime();
+    dax_scan_value(*ctx, 0, &src, &dst, DAX_LT, &predicate);
+    //t_end = gethrtime();
+    //long long t_res = t_end - t_start;
 
     //FILE *pFile;
     //pFile = fopen("dax_results.txt", "a");
     //fprintf(pFile, "%lld\n", t_res);
     //fclose(pFile);
-    int remainder = WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE); 
-    printf("DAX Scan for orders took %llu ns!\n", t_res);
-    printf("Count: %lu\n", scan_res.count - remainder);
+    //int remainder = (WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE)) % 64; 
+    //printf("Count (orders): %lu -- DAX", scan_res.count - remainder);
+    //printf("Took %llu ns!\n", t_res);
 
+    uint64_t* bit_vector = (dataComp->getBitVector() + curPart * col->num_of_segments); 
+    memcpy(bit_vector, dst.data, col->num_of_segments * 8);
     //int remainder = WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE); 
     //printf("Count: %lu, r: %d\n", scan_res.count - remainder, remainder);
-    agg(compTable, (uint64_t *) dst.data, curPart, dataComp->getCompLines(curPart), col->end - col->start, col->num_of_bits + 1);
     free(src.data);
     free(dst.data);
 } 
 #endif
 
-void Query3::orderscan_sw()
+void Query3::orderscan_sw(DataCompressor *dataComp, int curPart)
 { 
+    table *compTable = dataComp->getTable();
+    int ind = 4 + curPart * compTable->nb_columns;
+    column *col = &(compTable->columns[ind]);
+
+    uint64_t predicate = compTable->columns[4].keys["1996-01-10"];
+    uint64_t data_vector = 0;
+    uint64_t upper_bound = (0 << col->num_of_bits) | predicate; //Y vector 
+    uint64_t mask = (0 << col->num_of_bits) | (uint64_t) (pow(2, col->num_of_bits) - 1);
+
+    int i, j;
+    for(i = 0; i < WORD_SIZE / (col->num_of_bits + 1) - 1; i++){
+        upper_bound |= (upper_bound << (col->num_of_bits + 1));
+        mask |= (mask << (col->num_of_bits + 1));
+    }
+
+    uint64_t cur_result;
+    //int count = 0;
+    int total_lines = col->num_of_bits + 1; 
+    uint64_t local_res = 0;
+    uint64_t* bit_vector = (dataComp->getBitVector() + curPart * col->num_of_segments); 
+     
+    //hrtime_t t_start, t_end;
+    //t_start = gethrtime();
+
+    /* LESS THAN OPERATOR */
+    for(i = 0; i < col->num_of_segments; i++){
+        for(j = 0; j < total_lines; j++){
+            data_vector = col->compressed[i * total_lines + j];
+            cur_result = data_vector ^ mask;
+            cur_result += upper_bound;
+            cur_result = cur_result & ~mask;
+            //count += __builtin_popcountl(cur_result);
+            local_res = local_res | (cur_result >> j); 
+        }
+	bit_vector[i] = local_res;
+        local_res = 0;
+    }
+    
+    //t_end = gethrtime();
+    //long long t_res = t_end - t_start;
+
+    //dataComp->scan_vector 
+    //FILE *pFile;
+    //pFile = fopen("sw_results.txt", "a");
+    //fprintf(pFile, "%lld\n", t_res);
+    //fclose(pFile);
+
+    //int remainder = (WORD_SIZE - ((col->end - col->start + 1) % WORD_SIZE)) % 64; 
+    //printf("Count (orders): %d -- SW %llu -- ", count - remainder, t_res);
+    //printf("\n");
+    //printf("Took %llu ns!\n", t_res);
 }
 
 #ifdef __sun 
-void Query3::join_hw(dax_context_t **ctx, dax_vec_t *src, dax_vec_t *bit_map, dax_vec_t *l_scan_res)
+void Query3::join_hw(DataCompressor *lineitemComp, DataCompressor *ordersComp, int curPart, dax_context_t **ctx)
 { 
+    table *lineTable = lineitemComp->getTable();
+    table *ordersTable = ordersComp->getTable();
+
+    int ind = curPart * lineTable->nb_columns; //l_orderkey
+    column *lokey_col = &(lineTable->columns[ind]);
+
+    int start = lokey_col->start; 
+    int end = lokey_col->end; 
+
+    int num_of_els = end - start + 1;
+    if(num_of_els % 64 != 0)
+        num_of_els = ((num_of_els / 64) + 1) * 64;
+
+    dax_vec_t src;
+    dax_vec_t dst;
+    dax_vec_t dst2;
+    dax_vec_t bit_map;
+
+    memset(&src, 0, sizeof(dax_vec_t));
+    memset(&dst, 0, sizeof(dax_vec_t));
+    memset(&dst2, 0, sizeof(dax_vec_t));
+    memset(&bit_map, 0, sizeof(dax_vec_t));
+
     dax_result_t join_res;
 
-    dax_vec_t dst, dst2;
-    dst.elements = src->elements;
+    src.elements = num_of_els;
+    src.format = DAX_BITS;
+    src.elem_width = lokey_col->num_of_bits + 1;
+
+    src.data = malloc(src.elements * src.elem_width);
+    src.data = lokey_col->compressed;
+
+    dst.elements = src.elements;
     dst.offset = 0;
     dst.format = DAX_BITS;
     dst.elem_width = 1;
     dst.data = memalign(8192, DAX_OUTPUT_SIZE(dst.elements, dst.elem_width));
 
-    dst2 = dst;
+    bit_map.elements = ordersTable->nb_lines;
+    bit_map.format = DAX_BITS;
+    bit_map.elem_width = 1;
+    bit_map.data = malloc(bit_map.elements);
+    bit_map.data = ordersComp->getBitVector();
+    // src -- l_orderkey column from lineitem table
+    // bit_map -- global bit vector result coming from the orders scan
 
     hrtime_t t_start, t_end;
     t_start = gethrtime();
-    join_res = dax_translate(*ctx, 0, src, &dst, bit_map, src->elem_width);
-    join_res = dax_and(*ctx, 0, &dst, l_scan_res, &dst2);
+    join_res = dax_translate(*ctx, 0, &src, &dst, &bit_map, src.elem_width);
+    //join_res = dax_and(*ctx, 0, &dst, lineitemComp->getBitVector(), &dst2);
     t_end = gethrtime();
     long long t_res = t_end - t_start;
 
@@ -232,8 +323,9 @@ void Query3::join_hw(dax_context_t **ctx, dax_vec_t *src, dax_vec_t *bit_map, da
     printf("Join between lineitem and orders took %llu ns!\n", t_res);
     printf("Count: %lu\n", join_res.count);
 
-    free(src->data);
+    free(src.data);
     free(dst.data);
+    free(bit_map.data);
 } 
 #endif
 

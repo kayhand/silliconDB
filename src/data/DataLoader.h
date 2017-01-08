@@ -5,24 +5,35 @@
 #include "../util/Partitioner.h"
 
 class DataLoader{
-    string fileName;
 
     public:
-	DataLoader(string file){
-	    fileName = file;
+	DataLoader(int num_of_tables){
+	    dataCompressors.reserve(num_of_tables);
+	    dataCompressors.resize(num_of_tables);
         }
         ~DataLoader(){
-	    delete compressedTable;
+	    for(DataCompressor* curComp : dataCompressors)
+	        delete curComp;
 	}
-        DataCompressor *compressedTable;
+	std::vector<DataCompressor*> dataCompressors;
 
-   void parseTable(Partitioner &part){
-        compressedTable = new DataCompressor(fileName, part);
-        compressedTable->parse();
-   }
-   void compressTable(){
-        compressedTable->compress();    
-   }
+    void initializeCompressor(string fileName, int t_id, Partitioner &part){
+        DataCompressor *compressedTable = new DataCompressor(fileName, t_id, part);
+   	dataCompressors.at(t_id) = compressedTable;
+    }
+
+    void parseTable(int t_id){
+ 	 dataCompressors[t_id]->createTable();
+ 	 dataCompressors[t_id]->parse();
+    }
+
+    void compressTable(int t_id){
+	 dataCompressors[t_id]->compress();
+    }
+
+    DataCompressor* getDataCompressor(int t_id){
+        return dataCompressors[t_id];   
+    }
 
 };
 

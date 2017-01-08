@@ -13,7 +13,8 @@ class Query {
     public:
         Query(){part_id = -1;}
         Query(bool type, int p_id, int t_id) : p_type(type), part_id(p_id), table_id(t_id){}
-        ~Query(){}
+        ~Query(){
+	}
 
 	bool &getType(){
 	    return this->p_type;
@@ -24,7 +25,7 @@ class Query {
 	int &getTableId(){
 	    return this->table_id;
 	}
-
+	
     private:
         bool p_type;
 	int part_id;

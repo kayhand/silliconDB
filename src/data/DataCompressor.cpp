@@ -1,56 +1,16 @@
-#define DELIMITER '|'
 #include "DataCompressor.h"
 
 using namespace std;
-std::vector<std::string> explode(std::string const & s, char delim);
 
-DataCompressor::DataCompressor(){
-
-}
-
-DataCompressor::DataCompressor(string filename, Partitioner &partitioner){
+DataCompressor::DataCompressor(string filename, int t_id, Partitioner &partitioner){
+    this->path = filename;
+    this->t_id = t_id;
     this->partitioner = &partitioner;
-    path = filename;
-    p_size = partitioner.getMap().size();
-
-    ifstream file;
-    string buff;
-    file.open(path);
-    getline(file, buff);
-    vector<string> exploded;
-    exploded = explode(buff, DELIMITER);
-    file.close();
-
-    t.nb_columns = exploded.size();
-    t.columns = new column [t.nb_columns * p_size];
-    t.nb_lines = partitioner.getEls();
-    //printf("Cols: %d, Els %d, Psize: %d\n", t.nb_columns, t.nb_lines, p_size);
-
-    for(int curCol = 0; curCol < t.nb_columns * p_size; curCol++){
-	int actual_id = curCol % t.nb_columns;
-	int part_id = curCol / t.nb_columns;
-
-        if(!exploded[actual_id].find("INT")){        
-            t.columns[curCol].data_type = column::data_type_t::INT;
-	}
-        else if(!exploded[actual_id].find("DOUBLE")){        
-            t.columns[curCol].data_type = column::data_type_t::DOUBLE;
-	}
-	else{
-            t.columns[curCol].data_type = column::data_type_t::STRING;
-	}
-
-	t.columns[curCol].start = partitioner.getMap().at(part_id).first;
-	t.columns[curCol].end = partitioner.getMap().at(part_id).second;
-	t.columns[curCol].column_id = curCol;
-    }
-    distinct_keys = new int[t.nb_columns]();
-    exploded.clear();
+    this->num_of_parts = partitioner.getMap().size();
 }
 
 DataCompressor::~DataCompressor(){
-    printf("Destroy data compressor\n");
-    for(int i=0; i < t.nb_columns * p_size; i++){
+    for(int i=0; i < t.nb_columns * num_of_parts; i++){
         switch(t.columns[i].data_type){
             case column::data_type_t::INT:
 		t.columns[i].i_keys.clear();
@@ -74,6 +34,37 @@ DataCompressor::~DataCompressor(){
     delete[] t.columns;
     t.keyMap.clear();
     delete[] distinct_keys;
+    delete[] bit_vector;
+}
+
+void DataCompressor::createTable(){
+    t.nb_columns = partitioner->getNumOfAtts();
+    t.nb_lines = partitioner->getNumOfElements();
+    t.columns = new column [t.nb_columns * num_of_parts];
+    vector<string> schema = partitioner->getSchema();
+
+    printf("Cols: %d, Els %d, Psize: %d\n", t.nb_columns, t.nb_lines, num_of_parts);
+
+    for(int curCol = 0; curCol < t.nb_columns * num_of_parts; curCol++){
+	int actual_id = curCol % t.nb_columns;
+	int part_id = curCol / t.nb_columns;
+
+        if(!schema[actual_id].find("INT")){        
+            t.columns[curCol].data_type = column::data_type_t::INT;
+	}
+        else if(!schema[actual_id].find("DOUBLE")){        
+            t.columns[curCol].data_type = column::data_type_t::DOUBLE;
+	}
+	else{
+            t.columns[curCol].data_type = column::data_type_t::STRING;
+	}
+
+	t.columns[curCol].start = partitioner->getMap().at(part_id).first;
+	t.columns[curCol].end = partitioner->getMap().at(part_id).second;
+	t.columns[curCol].column_id = curCol;
+    }
+    distinct_keys = new int[t.nb_columns]();
+    schema.clear();
 }
 
 void DataCompressor::parse(){
@@ -90,7 +81,7 @@ void DataCompressor::parse(){
     getline(file, buff);
     while(getline(file, buff)){
         exploded = explode(buff, DELIMITER);
-        for(int col = 0; col < t.nb_columns * p_size; col++){	   
+        for(int col = 0; col < t.nb_columns * num_of_parts; col++){	   
 	    int actual_col = col % t.nb_columns;
 	    if(t.columns[col].start > line || line > t.columns[col].end){
 		continue;
@@ -154,29 +145,32 @@ void DataCompressor::parse(){
 
     //Create key map for efficient aggregation
     //Q1 has col[8] and col[9] as keys
-    uint64_t curKey;
-    auto it2 = t.columns[9].keys.begin();
-    for(auto it1 = t.columns[8].keys.begin(); it1 != t.columns[8].keys.end(); ++it1, ++it2){
-    	curKey = it1->second;
-	curKey <<= 32;
-	curKey |= it2->second;
+    if(this->t_id == 0){ //for lineitem table
+	    uint64_t curKey;
+	    auto it2 = t.columns[9].keys.begin();
+	    for(auto it1 = t.columns[8].keys.begin(); it1 != t.columns[8].keys.end(); ++it1, ++it2){
+		curKey = it1->second;
+		curKey <<= 32;
+		curKey |= it2->second;
 
-	if(t.keyMap.find(curKey) == t.keyMap.end())
-	    t.keyMap.emplace(curKey, t.keyMap.size());
+		if(t.keyMap.find(curKey) == t.keyMap.end())
+		    t.keyMap.emplace(curKey, t.keyMap.size());
+	    }
     }
-
     getNumberOfBits();
-    for(int col = 0; col < t.nb_columns * p_size; col++){
+    for(int col = 0; col < t.nb_columns * num_of_parts; col++){
 	int actual_col = col % t.nb_columns;
 	int part_id = col / t.nb_columns;
         cur_col = &(t.columns[col]);
 
         int n_bits = cur_col->num_of_bits;
+	int curPartSize = getPartSize(part_id); //How many data elements in the current part
+
         cur_col->num_of_codes = WORD_SIZE / (n_bits + 1);
         cur_col->codes_per_segment = cur_col->num_of_codes * (n_bits + 1);
-        cur_col->num_of_segments = ceil((double) getPartSize(part_id) / cur_col->codes_per_segment);
+        cur_col->num_of_segments = ceil((double) curPartSize / cur_col->codes_per_segment);
+	t.num_of_segments += cur_col->num_of_segments;
 
-	int curPartSize = getPartSize(part_id); //How many data elements in the current part
         cur_col->data = new uint32_t[curPartSize];
 	
 	int curInd = 0;
@@ -194,6 +188,7 @@ void DataCompressor::parse(){
 		cur_col->data[curInd++] = t.columns[actual_col].keys[curPair.first];
 	}
     }
+    bit_vector = new uint64_t[t.num_of_segments];
 }
 
 void DataCompressor::bw_compression(column &c){
@@ -205,10 +200,10 @@ void DataCompressor::bw_compression(column &c){
     int rows = c.num_of_bits + 1;
 
     int shift_amount = 0;
-    int p_size = c.end - c.start + 1;
+    int num_of_parts = c.end - c.start + 1;
     int curInd;
 
-    for(int i = 0 ; i < p_size; i++){	    
+    for(int i = 0 ; i < num_of_parts; i++){	    
 	newVal = c.data[i];
         curSegment = values_written / c.codes_per_segment;
         if(curSegment >= c.num_of_segments)
@@ -302,23 +297,27 @@ void DataCompressor::getNumberOfBits(){
     int actual_col = 0;
     int count = 0;
     int round = 0;
-    for(int col = 0; col < t.nb_columns * p_size; col++){
+    for(int col = 0; col < t.nb_columns * num_of_parts; col++){
         if(t.columns[col].num_of_bits != -1)
             continue;
 	actual_col = col % t.nb_columns;
 	count = distinct_keys[actual_col];
-	round = ceil(log2(count));	
-	n_bits = ceil(log2(round));
-	if(pow(2, n_bits) == round)
-	    n_bits++;
-	n_bits = pow(2, n_bits) - 1;
+	if(count == 1)
+	    n_bits = 1;
+	else{
+	    round = ceil(log2(count));	
+	    n_bits = ceil(log2(round));
+	    if(pow(2, n_bits) == round)
+	        n_bits++;
+	    n_bits = pow(2, n_bits) - 1;
+	}
         t.columns[col].num_of_bits = n_bits;
     }
 }
 
 void DataCompressor::compress(){
     column *cur_col;
-    for(int col = 0; col < t.nb_columns * p_size; col++){
+    for(int col = 0; col < t.nb_columns * num_of_parts; col++){
         cur_col = &(t.columns[col]);
 
 	//int part_id = col / t.nb_columns;

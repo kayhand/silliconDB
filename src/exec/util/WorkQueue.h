@@ -15,29 +15,36 @@ using namespace std;
 template <typename T> class WorkQueue
 {
     int mq_id;
-    std::unordered_map<int, std::pair<int,int>> *partMap;  
-    Partitioner *part;
-    DataCompressor *dataComp;
+    DataLoader *dataLoader;
 
     atomic<Node<T>*> head;
     atomic<Node<T>*> tail;
 
     public:
         WorkQueue(){}
-        WorkQueue(int q_id, Partitioner *partitioner, DataCompressor *dataCompressor){
-	    mq_id = q_id;
-	    part = partitioner;
-	    dataComp = dataCompressor;
+        WorkQueue(int q_id, DataLoader *dataLoader){
+	    this->mq_id = q_id;
+	    this->dataLoader = dataLoader;
 	    head.store(new Node<T>);
 	    tail.store(head.load());
         }
 
 	WorkQueue(const WorkQueue &source){
+	    this->mq_id = source.mq_id;
+	    this->dataLoader = source.dataLoader;
 	    head.store(source.head.load(std::memory_order_relaxed));
 	    tail.store(source.tail.load(std::memory_order_relaxed));
 	}
 
         ~WorkQueue() {	    
+        /*  Node<T> *curr = head;
+	    Node<T> *temp = curr;
+	    while(temp->next){
+		curr = curr->next;
+		delete temp;
+		temp = curr;
+	    }
+	    delete temp;*/
 	}
 
     Node<T>* getHead(){
@@ -49,14 +56,13 @@ template <typename T> class WorkQueue
     }
 
     void printQueue(){
-    	/*Node<T>* curNode = head.load(std::memory_order_relaxed);
-
+    	Node<T>* curNode = head.load(std::memory_order_relaxed);
 	curNode = curNode->next;
 	while(curNode != NULL){
 	    printf("%d - ", curNode->value.getPart());
 	    curNode = curNode->next;
 	}
-	printf("\n"); */
+	printf("\n"); 
     }
 
     void add(Node<T> *node){	
@@ -65,7 +71,6 @@ template <typename T> class WorkQueue
 	    Node<T> *last = tail;
 	    Node<T> *next = (last->next).load(std::memory_order_relaxed);
 	    //Node<T> *next = last->next;
-	    //printQueue();
 	    if(last == tail){
 	        if(next == NULL){
 		    if((last->next).compare_exchange_weak(next, node)){		  
@@ -77,6 +82,7 @@ template <typename T> class WorkQueue
 	    	    tail.compare_exchange_weak(last, next);	
 	        }
 	    }
+	    printQueue();
 	}
     }
     
@@ -90,38 +96,24 @@ template <typename T> class WorkQueue
 		    if(next == NULL){
 		    	printf("Queue is empty!\n!");
 		    }
-		    //else if(tail.compare_exchange_weak(last, next)){
-		      //  delete last;
-		    //}
 		    tail.compare_exchange_weak(last, next);
 		}
 		else{
 		    T value = next->value;
 		    if(head.compare_exchange_weak(first, next)){
-		//	printf("New partition is %d from thread %d\n", value.getPart(), t_id);
-	//		delete first;
 			return value;
 		    }
 		}
-	    }
-	
+	    }	
 	}
-        //T item;
-        //item = m_queue.front();
-        //m_queue.pop_front();
-        //return item;
     }
     
     int getId(){
         return mq_id;
     }
 
-    Partitioner* getPartitioner(){
-	return part;
-    }
-
-    DataCompressor* getCompressor(){
-        return dataComp;
+    DataLoader* getDataLoader(){
+        return this->dataLoader;
     }
 
 };

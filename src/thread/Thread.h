@@ -13,8 +13,8 @@ template <class T>
 struct Node{
     T value;
     std::atomic<Node<T>*> next;  
-    Node(){}
-    Node(T value) : value(value){}
+    Node() : next(nullptr){}
+    Node(T value) : value(value), next(nullptr){}
     Node(const Node &source){
     	next.store(source.next.load());
     }
@@ -122,7 +122,7 @@ class Thread
     }
 
     void reserveNodes(int num_of_nodes){
-    	node_pool.reserve(num_of_nodes);
+    	node_pool.resize(num_of_nodes);
     	for(int i = 0; i < num_of_nodes; i++){
     	    node_pool[i] = new Node<T>();
 	}
@@ -134,13 +134,13 @@ class Thread
     }
 
     Node<T>* returnNextNode(T item){
-	if(curNodeId == 9){
+	if(curNodeId == 49){
 	    printf("All nodes used!\n");
 	    return NULL;
 	}
 	else{
 	    Node<T>* curNode = node_pool.at(curNodeId);
-	    curNode.setValue(item);
+	    curNode->value = item;
     	    return node_pool.at(curNodeId++);
 	}
     }
