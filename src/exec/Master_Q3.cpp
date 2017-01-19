@@ -10,8 +10,10 @@
 #include "../data/DataLoader.h"
 #include "../util/Partitioner.h"
 #include "../util/Query.h"
-#include "../util/Query1.h"
+#include "../util/Query3.h"
+#include "../util/WorkItem.h"
 
+std::atomic<int> o_cnt = ATOMIC_VAR_INIT(0);
 std::atomic<int> li_cnt = ATOMIC_VAR_INIT(0);
 
 pthread_barrier_t barrier;
@@ -23,6 +25,7 @@ class CoreHandler : public Thread<Query>
 	WorkQueue<Query> *scan_queue;
 	TCPStream* t_stream;
 	DataCompressor *lineitemComp = scan_queue->getDataLoader()->getDataCompressor(0);
+	DataCompressor *ordersComp = scan_queue->getDataLoader()->getDataCompressor(1);
 	int loop_id = 0;
 	bool done = false;
 
@@ -32,22 +35,21 @@ class CoreHandler : public Thread<Query>
 	void *run(){
 		pthread_barrier_wait(&barrier);
 		for(int i = 0; ; i++){
-			while(scan_queue->getHead() != scan_queue->getTail()){
-				Query item = scan_queue->remove();
-				printf("Got from table id %d, partition %d - loop: %d in thread %d!\n", item.getTableId(), item.getPart(), loop_id++, this->getId());
+				while(scan_queue->getHead() != scan_queue->getTail()){
+					Query item = scan_queue->remove();
+					printf("Got from table id %d, partition %d - loop: %d in thread %d!\n", item.getTableId(), item.getPart(), loop_id++, this->getId());
 
-				if(item.getTableId() == 0){
-				    Query1::linescan_sw(lineitemComp, item.getPart());
-	    			    Query agg_item(1, item.getPart(), 1); //(0: hw/sw - 1:sw only, part_id, job type) -- scan or agg
-				    addNewJob(agg_item);
-				    li_cnt++;
+					if(item.getTableId() == 0){
+					    Query3::linescan_sw(lineitemComp, item.getPart());
+					    li_cnt++;
+					}
+					else if(item.getTableId() == 1){
+					    Query3::orderscan_sw(ordersComp, item.getPart());
+					    o_cnt++;
+					}
 				}
-				else if(item.getTableId() == 1){
-				    Query1::agg(lineitemComp, item.getPart());
-				}
-			}
-	    	        t_stream->send("", 0);
-			return NULL;
+		    	        t_stream->send("", 0);
+				return NULL;
 		}
 		return(0);
 	}
@@ -67,6 +69,7 @@ class DaxHandler : public Thread<Query>
 	TCPStream* t_stream;
 	dax_context_t *ctx;
 	DataCompressor *lineitemComp = scan_queue->getDataLoader()->getDataCompressor(0);
+	DataCompressor *ordersComp = scan_queue->getDataLoader()->getDataCompressor(1);
 	int loop_id = 0;
 	bool done = false;
 
@@ -81,31 +84,44 @@ class DaxHandler : public Thread<Query>
 				Query item = scan_queue->remove();
 				//printf("Got from table id %d, partition %d - loop: %d in thread %d!\n", item.getTableId(), item.getPart(), loop_id++, this->getId());
 
-				if(item.getType() == 0){
+				if(item.getTableId() == 0){
 				    Query3::linescan_hw(lineitemComp, item.getPart(), &ctx);
 				    li_cnt++;
-	    			    Query agg_item(1, item.getPart(), 1); //(0: hw/sw - 1:sw only, part_id, job type) -- scan or agg
-				    addNewJob(agg_item);
 				}
-				else{
-				    scan_queue->add(item);
+				else if(item.getTableId() == 1){
+				    Query3::orderscan_hw(ordersComp, item.getPart(), &ctx);
+				    //Query3::orderscan_sw(ordersComp, item.getPart());
+				    o_cnt++;
+				}
+				else if(item.getTableId() == 2){ //join
+				    Query3::join_hw(lineitemComp, ordersComp, item.getPart(), &ctx);
 				}
 			}
-			int count = 0;
-			for(int ind = 0; ind < lineitemComp->getTable()->num_of_segments; ind++){
-			    count += __builtin_popcountl(lineitemComp->getBitVector()[ind]);
-			}
-			printf("Lineitem scan count: %d\n", count);
+			/*if(!done){
+			    pthread_mutex_lock(&queue_mutex);
+    			    while(scan_queue->getHead() == scan_queue->getTail()){
+				pthread_cond_wait(&queue_cond, &queue_mutex); 
+			    }
+			    pthread_mutex_unlock(&queue_mutex);
+			}*/
+			//else{
+				int count = 0;
+				for(int ind = 0; ind < ordersComp->getTable()->num_of_segments; ind++){
+				count += __builtin_popcountl(ordersComp->getBitVector()[ind]);
+				}
+				printf("Orders scan count: %d\n", count);
 
-			t_stream->send("", 0);
-			return NULL;
+				count = 0;
+				for(int ind = 0; ind < lineitemComp->getTable()->num_of_segments; ind++){
+				count += __builtin_popcountl(lineitemComp->getBitVector()[ind]);
+				}
+				printf("Lineitem scan count: %d\n", count);
+
+				t_stream->send("", 0);
+				return NULL;
+			//}
 		}
 		return(0);
-	}
-
-	void addNewJob(Query item){
- 	    Node<Query> *newNode = this->returnNextNode(item);
-            scan_queue.add(newNode);		
 	}
 
 	void setStream(TCPStream* stream){
@@ -158,7 +174,18 @@ class ProcessingUnit{
 	    	job_queue.add(newNode);
     	   	initialNodes.push_back(newNode);
 	    }
-	}	
+	}
+
+	void appendWork(int num_of_parts, int table_id){
+	    for(int part_id = 0; part_id < num_of_parts; part_id++){
+   	        Query item(1, part_id, table_id); //(0: sw - 1:hw, part_id, table_id)
+	    	Node<Query> *newNode = new Node<Query>(item);
+	    	job_queue.add(newNode);
+    	   	initialNodes.push_back(newNode);
+ 	        //Node<Query> *newNode = this->returnNextNode(item);
+                //job_queue.add(newNode);
+	    }
+	}
 
 	void startThreads(TCPStream* connection){
 	    for(CoreHandler* curConn : conn_handlers){
@@ -168,7 +195,7 @@ class ProcessingUnit{
  	    }
 	    dax_handler->setStream(connection);
 	    dax_handler->start(dax_handler->getId());
-	    dax_handler->reserveNodes(50);
+	    dax_handler->reserveNodes(10);
 	}
 
 	void joinThreads(){
@@ -204,8 +231,8 @@ class ProcessingUnit{
 
 int main(int argc, char** argv)
 {
-	if ( argc != 5 ) {
-		printf("usage: %s <workers> <port> <ip> <fileName>\n", argv[0]);
+	if ( argc != 6 ) {
+		printf("usage: %s <workers> <port> <ip> <fileName> <fileName2>\n", argv[0]);
 		exit(-1);
 	}
 
@@ -213,18 +240,26 @@ int main(int argc, char** argv)
 	int port = atoi(argv[2]);
 	string ip = argv[3];
 	string fileName = argv[4];
+	string fileName2 = argv[5];
 
 	pthread_barrier_init(&barrier, NULL, workers); 
+	pthread_mutex_init(&queue_mutex, NULL);
+	pthread_cond_init (&queue_cond, NULL);
 
 	/*Lineitem table*/
-	Partitioner line_part;
+	Partitioner line_part, orders_part;
 	line_part.roundRobin(fileName); 
+	orders_part.roundRobin(fileName2); 
 
-	DataLoader data_loader(1);
+	DataLoader data_loader(2);
 	data_loader.initializeCompressor(fileName, 0, line_part);
+	data_loader.initializeCompressor(fileName2, 1, orders_part);
 
 	data_loader.parseTable(0);
 	data_loader.compressTable(0);
+
+	data_loader.parseTable(1);
+	data_loader.compressTable(1);
 
 	TCPAcceptor* connectionAcceptor;
 	//connectionAcceptor = new TCPAcceptor(port, (char*)ip.c_str());
@@ -264,9 +299,23 @@ int main(int argc, char** argv)
 
 	    pthread_barrier_destroy(&barrier);
 
+	    while(li_cnt < line_part.getNumberOfParts()){
+	    }
+    	    printf("li parts: %u\n", unsigned(li_cnt));
+
+	    proc_units[0].endResources();
+	    proc_units[0].appendWork(orders_part.getNumberOfParts(), 1);
 	    for(ProcessingUnit proc_unit : proc_units){
 		proc_unit.joinThreads();
 	    }
+
+	    pthread_mutex_lock(&queue_mutex);
+	    pthread_cond_broadcast(&queue_cond); 
+	    pthread_mutex_unlock(&queue_mutex);
+
+	    while(o_cnt < orders_part.getNumberOfParts()){
+	    }
+    	    printf("o parts: %u\n", unsigned(o_cnt));
 
 	    numberOfConnections--;
 	    delete connection;
@@ -277,6 +326,10 @@ int main(int argc, char** argv)
     for(ProcessingUnit proc_unit : proc_units){
         proc_unit.clearResources();
     }
+
+    //pthread_barrier_destroy(&barrier);
+    pthread_mutex_destroy(&queue_mutex);
+    pthread_cond_destroy(&queue_cond);
 
     return 0;
 }

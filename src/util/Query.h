@@ -12,11 +12,10 @@ extern "C"{
 class Query {
     public:
         Query(){part_id = -1;}
-        Query(bool type, int p_id, int t_id) : p_type(type), part_id(p_id), table_id(t_id){}
-        ~Query(){
-	}
+        Query(int type, int p_id, int t_id) : p_type(type), part_id(p_id), table_id(t_id){}
+        ~Query(){}
 
-	bool &getType(){
+	int &getType(){
 	    return this->p_type;
 	}
 	int &getPart(){
@@ -27,9 +26,9 @@ class Query {
 	}
 	
     private:
-        bool p_type;
+        int p_type;
 	int part_id;
-	int table_id; // 0 -> orders, 1 -> lineitem
+	int table_id; // 0 -> lineitem, 1 -> agg
 };
 
 #endif
