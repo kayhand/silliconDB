@@ -1,10 +1,8 @@
 set(UTIL_SRC
     Partitioner.h
     Partitioner.cpp
-    WorkItem.h
-    WorkItem.cpp
-    Query3.h
-    Query3.cpp
+    Query1.h
+    Query1.cpp
 )
 
 link_directories(/opt/dax)

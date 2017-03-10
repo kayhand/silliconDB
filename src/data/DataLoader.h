@@ -12,13 +12,14 @@ class DataLoader{
 	    dataCompressors.resize(num_of_tables);
         }
         ~DataLoader(){
-	    for(DataCompressor* curComp : dataCompressors)
+	    for(DataCompressor* curComp : dataCompressors){
 	        delete curComp;
+	    }
 	}
 	std::vector<DataCompressor*> dataCompressors;
 
-    void initializeCompressor(string fileName, int t_id, Partitioner &part){
-        DataCompressor *compressedTable = new DataCompressor(fileName, t_id, part);
+    void initializeCompressor(string fileName, int t_id, Partitioner &part, int sf){
+        DataCompressor *compressedTable = new DataCompressor(fileName, t_id, part, sf);
    	dataCompressors.at(t_id) = compressedTable;
     }
 

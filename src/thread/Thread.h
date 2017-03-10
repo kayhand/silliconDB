@@ -5,6 +5,12 @@
 #include <vector>
 #include <atomic>
 
+#ifdef __sun 
+#include <sys/processor.h>
+#include <sys/procset.h>
+#include <thread.h>
+#endif
+
 /*
 	Java style thread package on top of p_threads
 */
@@ -15,6 +21,9 @@ struct Node{
     std::atomic<Node<T>*> next;  
     Node() : next(nullptr){}
     Node(T value) : value(value), next(nullptr){}
+    Node(int r_id, int p_id, int j_type) : next(nullptr){
+    	value.setFields(r_id, p_id, j_type);
+    }
     Node(const Node &source){
     	next.store(source.next.load());
     }
@@ -51,8 +60,8 @@ class Thread
 
 	int result = pthread_create(&tid, &attr, runThread, this);
     	if (result == 0) {
-        	running = 1;
-    		setAffinity(cpuid);
+        	running = cpuid;
+    		setAffinity(cpuid * 8);
     	}
     	return result;
     }
@@ -97,14 +106,33 @@ class Thread
 
     int setAffinity(int cpuid)
     {
-    #ifdef __gnu_linux__
         int result = -1;
+    #ifdef __gnu_linux__
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
         CPU_SET(cpuid, &cpuset);
         //printf("Affinity set to core number %d\n", cpuid);
         result  = pthread_setaffinity_np(tid, sizeof(cpu_set_t), &cpuset);
         return result;
+    #else
+	procset_t ps;
+	uint_t nids = 1;
+	id_t ids[1] = {cpuid};
+
+	uint32_t flags = PA_TYPE_CPU | PA_AFF_STRONG;
+	setprocset(&ps, POP_AND, P_PID, P_MYID, P_LWPID, thr_self());
+
+         result = processor_affinity(&ps, &nids, ids, &flags);
+	 if(result != 0){
+	     fprintf(stderr, "Error setting affinity.\n");
+	     perror(NULL);
+	 }
+
+	 flags = PA_QUERY;
+	 id_t read_ids[1];
+         result = processor_affinity(&ps, &nids, read_ids, &flags);
+         //printf("Affinity set to core number %d\n", read_ids[0]);
+	 return result;
     #endif 
         return cpuid;
     }
@@ -133,17 +161,31 @@ class Thread
         	delete node; 
     }
 
-    Node<T>* returnNextNode(T item){
+    Node<T>* returnNextNode(T value){
 	if(curNodeId == 49){
 	    printf("All nodes used!\n");
 	    return NULL;
 	}
 	else{
 	    Node<T>* curNode = node_pool.at(curNodeId);
-	    curNode->value = item;
+	    curNode->value = value;
     	    return node_pool.at(curNodeId++);
 	}
     }
+
+
+    Node<T>* returnNextNode(int r_id, int p_id, int j_type){
+	if(curNodeId == 49){
+	    printf("All nodes used!\n");
+	    return NULL;
+	}
+	else{
+	    Node<T>* curNode = node_pool.at(curNodeId);
+	    curNode->value.setFields(r_id, p_id, j_type);
+    	    return node_pool.at(curNodeId++);
+	}
+    }
+
 };
 
 #endif

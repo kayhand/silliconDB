@@ -10,13 +10,11 @@ std::vector<std::string> explode(std::string const & s, char delim);
 
 class Partitioner {
     public:
-	Partitioner(){
-	}
-	~Partitioner(){
-	}
+	Partitioner(){}
+	~Partitioner(){}
 
         //void roundRobin(int numberOfPartitions, std::string filePath);
-        void roundRobin(std::string filePath);
+        void roundRobin(std::string filePath, int part_size);
 
 	std::unordered_map<int, std::pair<int,int>>& getMap(){
             return partitionMap;

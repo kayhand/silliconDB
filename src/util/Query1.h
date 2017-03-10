@@ -3,29 +3,26 @@
 
 #ifdef __sun
 extern "C"{
-    #include "/opt/dax/dax.h"
+    #include "/usr/include/dax.h"
 }
 #endif
 #include "../data/DataLoader.h"
+#include "../log/Result.h"
 #include "Helper.h"
 
 class Query1 {
     public:
         Query1();
-        Query1(bool type); //0 = sw; 1 = dax
         ~Query1();
-	void scan_hw(DataCompressor *dataComp, int curPart); 
-	void scan_sw(DataCompressor *dataComp, int curPart); 
-	void agg(DataCompressor *dataComp, int curPart, int dataEnd, int numOfBits);
 
-	#ifdef __sun
-		dax_result_t scan_res;
+	#ifdef __sun 
+	static void linescan_hw(DataCompressor *dataComp, int curPart, Result *result, dax_context_t **ctx); 
+	static void linescan_post(DataCompressor *dataComp, dax_queue_t **queue, Query *item); 
+	static void linescan_hw(DataCompressor *dataComp, int curPart, dax_context_t **ctx, pthread_barrier_t *barrier, pthread_barrier_t *dax_barrier); 
 	#endif
-	bool &getType(){
-	    return this->type;
-	}
-    private:
-        bool type;
+	static void linescan_sw(DataCompressor *dataComp, int curPart, Result *result); 
+	static void agg(DataCompressor *dataComp, int curPart, Result *result, bool isDax);
+	static void count(DataCompressor *dataComp, int curPart, Result *result);
 };
 
 #endif

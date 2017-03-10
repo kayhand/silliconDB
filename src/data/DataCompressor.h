@@ -27,7 +27,7 @@ struct column{
     	STRING
     }data_type;
 
-    uint32_t *data = 0;
+    uint32_t *data = 0;  //this is actually compressed but kept line by line
     uint64_t *compressed ; //compressed bit vector
 
     int num_of_bits = -1; //number of bits used
@@ -44,8 +44,8 @@ struct column{
 
     //Compressed to decompressed values
     unordered_map<uint32_t, string> dict;
-    unordered_map<uint32_t, int> d_dict;
-    unordered_map<uint32_t, int> i_dict;
+    int* i_dict;
+
 
     int start = 0;
     int end = 0;
@@ -54,6 +54,8 @@ struct column{
     int num_of_codes = -1; //Number of codes in each processor word (WORD_SIZE / num_of_bits + 1)
     int codes_per_segment = -1; //num_of_codes * (num_of_bits + 1); //Number of codes that fit in a single segment
     int num_of_segments =  -1; //ceil(num_of_elements * 1.0 / codes_per_segment); //Total number of segments needed to keep the data
+    
+    int index_mapping[64];
 };
 
 struct table{
@@ -61,7 +63,8 @@ struct table{
     int nb_lines;
     int num_of_segments = 0;
     column *columns;
-    unordered_map<uint64_t, int> keyMap; //For aggregation keys use a mapping for each key to avoid concat costs
+    unordered_map<uint32_t, int> keyMap; //For aggregation keys use a mapping for each key to avoid concat costs
+    unordered_map<int, uint32_t> reversedMap; 
 };
 
 class DataCompressor{
@@ -73,9 +76,10 @@ class DataCompressor{
     	Partitioner *partitioner;
 	int* distinct_keys;
 	uint64_t* bit_vector;
+	int scale_factor = 1;
 
     public:
-    	DataCompressor(string filename, int t_id, Partitioner &partitioner);
+    	DataCompressor(string filename, int t_id, Partitioner &partitioner, int sf);
 
 	//Copy constructor
 	DataCompressor(const DataCompressor& source);
@@ -107,5 +111,16 @@ class DataCompressor{
 
 	uint64_t* getBitVector(){
 	    return bit_vector;
+	}
+	
+	int getNumOfParts(){
+	    return num_of_parts;
+	}
+
+	int getScaleFactor(){
+	    return this->scale_factor;
+	}
+	int getDistinctKeys(int col_id){
+	    return *(distinct_keys + col_id);
 	}
 };

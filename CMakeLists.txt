@@ -8,7 +8,8 @@ INCLUDE_DIRECTORIES(/opt/dax)
 LINK_DIRECTORIES(/opt/dax)
 
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAG} -fno-omit-frame-pointer -fsanitize=address -m64 -g -DDEBUG -std=c++1y -Wall -Wextra -Werror")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAG} -m64 -g -DDEBUG -std=c++1y -lnsl -lsocket -ldax -Wall -Wextra -Werror")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAG} -m64 -g -DDEBUG -std=c++1y -lnsl -lsocket -ldax -Wall -Wextra -Werror")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAG} -m64 -O3 -std=c++1y -lnsl -lsocket -ldax -Wall -Wextra -Werror")
 
 add_subdirectory(src)
 

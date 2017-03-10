@@ -2,11 +2,12 @@
 
 using namespace std;
 
-DataCompressor::DataCompressor(string filename, int t_id, Partitioner &partitioner){
+DataCompressor::DataCompressor(string filename, int t_id, Partitioner &partitioner, int sf){
     this->path = filename;
     this->t_id = t_id;
     this->partitioner = &partitioner;
     this->num_of_parts = partitioner.getMap().size();
+    this->scale_factor = sf;
 }
 
 DataCompressor::~DataCompressor(){
@@ -15,7 +16,7 @@ DataCompressor::~DataCompressor(){
             case column::data_type_t::INT:
 		t.columns[i].i_keys.clear();
 		t.columns[i].i_pairs.clear();
-		t.columns[i].i_dict.clear();
+		delete[] t.columns[i].i_dict;
                 break;
             case column::data_type_t::STRING:
 		t.columns[i].keys.clear();
@@ -25,7 +26,7 @@ DataCompressor::~DataCompressor(){
             case column::data_type_t::DOUBLE:
 		t.columns[i].d_keys.clear();
 		t.columns[i].d_pairs.clear();
-		t.columns[i].d_dict.clear();
+		delete[] t.columns[i].i_dict;
                 break;
 	}
 	delete[] t.columns[i].data;
@@ -122,6 +123,7 @@ void DataCompressor::parse(){
     //Give keys indices in the increasing order
     for(int col = 0; col < t.nb_columns; col++){
 	    int index = 0;
+	    t.columns[col].i_dict = new int[distinct_keys[col]];
 	    for(auto curPair : t.columns[col].i_keys){
 		t.columns[col].i_keys[curPair.first] = index;
 		t.columns[col].i_dict[index] = curPair.first;
@@ -131,7 +133,7 @@ void DataCompressor::parse(){
 	    index = 0;	
 	    for(auto curPair : t.columns[col].d_keys){
 		t.columns[col].d_keys[curPair.first] = index;
-		t.columns[col].d_dict[index] = curPair.first * 100;
+		t.columns[col].i_dict[index] = curPair.first * 100;
 		index++;
 	    }
 
@@ -143,20 +145,6 @@ void DataCompressor::parse(){
 	    }	
     }
 
-    //Create key map for efficient aggregation
-    //Q1 has col[8] and col[9] as keys
-    if(this->t_id == 0){ //for lineitem table
-	    uint64_t curKey;
-	    auto it2 = t.columns[9].keys.begin();
-	    for(auto it1 = t.columns[8].keys.begin(); it1 != t.columns[8].keys.end(); ++it1, ++it2){
-		curKey = it1->second;
-		curKey <<= 32;
-		curKey |= it2->second;
-
-		if(t.keyMap.find(curKey) == t.keyMap.end())
-		    t.keyMap.emplace(curKey, t.keyMap.size());
-	    }
-    }
     getNumberOfBits();
     for(int col = 0; col < t.nb_columns * num_of_parts; col++){
 	int actual_col = col % t.nb_columns;
@@ -169,7 +157,9 @@ void DataCompressor::parse(){
         cur_col->num_of_codes = WORD_SIZE / (n_bits + 1);
         cur_col->codes_per_segment = cur_col->num_of_codes * (n_bits + 1);
         cur_col->num_of_segments = ceil((double) curPartSize / cur_col->codes_per_segment);
-	t.num_of_segments += cur_col->num_of_segments;
+	if(col % t.nb_columns == 10){
+    		t.num_of_segments += cur_col->num_of_segments; 
+	}
 
         cur_col->data = new uint32_t[curPartSize];
 	
@@ -188,7 +178,28 @@ void DataCompressor::parse(){
 		cur_col->data[curInd++] = t.columns[actual_col].keys[curPair.first];
 	}
     }
-    bit_vector = new uint64_t[t.num_of_segments];
+    bit_vector = new uint64_t[t.num_of_segments * this->scale_factor];
+    //Create key map for efficient aggregation
+    //Q1 has col[8] and col[9] as keys
+    if(this->t_id == 0){ //for lineitem table
+	    uint32_t curKey;
+	    auto it1 = t.columns[8].keys.begin();
+	    auto it2 = t.columns[9].keys.begin();
+	    while(it1 != t.columns[8].keys.end()){
+		curKey = it1->second;
+		curKey = (curKey << 16) | it2->second;
+
+		if(t.keyMap.find(curKey) == t.keyMap.end())
+		    t.keyMap.emplace(curKey, t.keyMap.size());
+		it1++;
+		it2++;
+	    }
+	    uint32_t final_key = 65536; 
+	    t.keyMap.emplace(final_key, t.keyMap.size());
+
+	    for(auto &curr : t.keyMap)
+		t.reversedMap.emplace(curr.second, curr.first);
+    }
 }
 
 void DataCompressor::bw_compression(column &c){
@@ -235,6 +246,15 @@ void DataCompressor::bw_compression(column &c){
     	//if(c.column_id == 49)
 	    //printf("Ind:%d Line val: %lu\n", curInd, c.compressed[curInd]);
     }
+
+    int n_bits = c.num_of_bits + 1;
+    int codes_per_line = c.codes_per_segment / n_bits;
+    int newIndex;
+    for(int i = 0; i < c.codes_per_segment; i++){
+    	newIndex = (i / codes_per_line) + n_bits * (i % codes_per_line);
+	c.index_mapping[i] = newIndex;
+    }
+
     /* 
     if(c.column_id != 10)
 	return;

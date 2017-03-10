@@ -26,9 +26,10 @@ int Thread::start(int cpuid)
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
     int result = pthread_create(&tid, &attr, runThread, this);
+    	setAffinity(cpuid);
     if (result == 0) {
         running = 1;
-    	setAffinity(cpuid);
+    	//setAffinity(cpuid);
     }
     return result;
 }
@@ -63,16 +64,16 @@ int Thread::detach()
 
 int Thread::setAffinity(int cpuid)
 {
-#ifdef __gnu_linux__
+//#ifdef __gnu_linux__
     int result = -1;
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(cpuid, &cpuset);
-    //printf("Affinity set to core number %d\n", cpuid);
+    printf("Affinity set to core number %d\n", cpuid);
     result  = pthread_setaffinity_np(tid, sizeof(cpu_set_t), &cpuset);
     return result;
-#endif 
-    return cpuid;
+//#endif 
+    //return cpuid;
 }
 
 pthread_t Thread::self() 
