@@ -58,7 +58,7 @@ template <typename T> class WorkQueue
     	Node<T>* curNode = head.load(std::memory_order_relaxed);
 	curNode = curNode->next;
 	while(curNode != NULL){
-	    printf("%d - ", curNode->value.getPart());
+	    printf("(%d : %d) - ", curNode->value.getPart(), curNode->value.getTableId());
 	    curNode = curNode->next;
 	}
 	printf("\n"); 
@@ -81,7 +81,7 @@ template <typename T> class WorkQueue
 	    	    tail.compare_exchange_weak(last, next);	
 	        }
 	    }
-	    printQueue();
+	    //printQueue();
 	}
     }
     
@@ -112,27 +112,54 @@ template <typename T> class WorkQueue
 	}
     }
 
-    T* remove_ref(int r_id){
+    T remove_ref_dax(){
 	while(true){
 	    Node<T> *first = head.load(std::memory_order_relaxed);
 	    Node<T> *last = tail.load(std::memory_order_relaxed);
 	    Node<T> *next = (first->next).load(std::memory_order_relaxed);
-	    if(next->value.getTableId() != 0 && r_id == 1){ //This happens when table id is 1 (aggegation) and resource id is 1 (DAX) unit;
-	        return NULL; //part_id == -1
+	    if(next->value.getTableId() != 0){ //This happens when table id is 1 (aggegation) and resource id is 1 (DAX) unit;
+	    	T dummy;
+	        return dummy; //part_id == -1
 	    }
 	    if(first == head){
 	        if(first == last){
 		    if(next == NULL){
 		    	tail.compare_exchange_weak(last, next);
 		    	printf("Queue is empty!\n!");
-			return NULL;
+	    		T dummy;
+		        return dummy; //part_id == -1
 		    }
 		    tail.compare_exchange_weak(last, next);
 
 		}
 		else{
-		    T *value = &(next->value);
+		    T value = next->value;
 		    if(head.compare_exchange_weak(first, next)){
+			return value;
+		    }
+		}
+	    }	
+	}
+    }
+
+    T remove_ref_core(){
+	while(true){
+	    Node<T> *first = head.load(std::memory_order_relaxed);
+	    Node<T> *last = tail.load(std::memory_order_relaxed);
+	    Node<T> *next = (first->next).load(std::memory_order_relaxed);
+	    if(first == head){
+	        if(first == last){
+		    if(next == NULL){
+		    	tail.compare_exchange_weak(last, next);
+		    	printf("Queue is empty!\n!");
+			T dummy;
+			return dummy;
+		    }
+		    tail.compare_exchange_weak(last, next);
+		}
+		else{
+		    if(head.compare_exchange_weak(first, next)){
+		    	T value = next->value;
 			return value;
 		    }
 		}

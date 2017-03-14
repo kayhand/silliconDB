@@ -471,7 +471,6 @@ void Query1::agg(DataCompressor *dataComp, int scaledPart, Result *result, bool 
 
 	agg_r = make_tuple(first_part[0], second_part[0], get<0>(local_ht[i]), get<1>(local_ht[i]));
     	result->addResult(agg_r);
-        printf("(%s | %s) -> <%d, %lu>\n", first_part.c_str(), second_part.c_str(), get<0>(local_ht[i]), get<1>(local_ht[i]));
     }
 }
 

@@ -150,6 +150,7 @@ class Thread
     }
 
     void reserveNodes(int num_of_nodes){
+    	node_pool.reserve(num_of_nodes);
     	node_pool.resize(num_of_nodes);
     	for(int i = 0; i < num_of_nodes; i++){
     	    node_pool[i] = new Node<T>();

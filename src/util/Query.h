@@ -16,10 +16,12 @@ struct q_udata{
 class Query {
     public:
         Query(){
+	    p_type = -1;
 	    part_id = -1;
+	    table_id = -1;
 	}
         Query(int type, int p_id, int t_id) : p_type(type), part_id(p_id), table_id(t_id){
-	    udata.p_id = this->part_id;
+	    //udata.p_id = this->part_id;
 	}
         ~Query(){}
 

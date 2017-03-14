@@ -21,15 +21,15 @@ target_link_libraries(
     util_src
 )
 
-add_executable(dax_queue DaxQueue.cpp)
-target_link_libraries(
-    dax_queue
-    data_lib
-    network_util
-    server_lib
-    pthread
-    util_src
-)
+#add_executable(dax_queue DaxQueue.cpp)
+#target_link_libraries(
+#    dax_queue
+#    data_lib
+#    network_util
+#    server_lib
+#    pthread
+#    util_src
+#)
 
 
 #add_executable(numa_exp NumaExp.cpp)
