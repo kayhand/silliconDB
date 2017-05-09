@@ -28,11 +28,14 @@ class Partitioner {
 	int getNumOfAtts(){
 	    return num_of_atts;
 	}
+	int getNumberOfParts(){
+	    return num_of_parts;
+	}
 	int getPartitionSize(int p_id){
 	    return partitionSizes[p_id];
 	}
-	int getNumberOfParts(){
-	    return num_of_parts;
+	int getSegsPerPart(){
+	    return segs_per_part;
 	}
 
     private:
@@ -42,6 +45,7 @@ class Partitioner {
 	int num_of_atts;
 	std::unordered_map<int, int> partitionSizes; 
 	int num_of_parts;
+	int segs_per_part;
 };
 
 #endif

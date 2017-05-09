@@ -1,5 +1,6 @@
 #include <fstream>
 #include <string>
+#include <cstring>
 #include <cstdint>
 #include <cstdlib>
 #include <cinttypes>
@@ -8,7 +9,7 @@
 #include <istream>
 #include <map>
 #include <sstream>
-#include <string>
+#include <iomanip>
 #include <utility>
 #include <vector>
 #include <unordered_map>
@@ -45,7 +46,7 @@ struct column{
     //Compressed to decompressed values
     unordered_map<uint32_t, string> dict;
     int* i_dict;
-
+    double* d_dict;
 
     int start = 0;
     int end = 0;
@@ -75,7 +76,8 @@ class DataCompressor{
     	int num_of_parts = 1;
     	Partitioner *partitioner;
 	int* distinct_keys;
-	uint64_t* bit_vector;
+	void* bit_vector;
+	void* join_vector;
 	int scale_factor = 1;
 
     public:
@@ -92,7 +94,7 @@ class DataCompressor{
     	void parse();
 	void createColumns();
     	void compress();
-    	void actual_compression(column &c);
+    	void bit_compression(column &c);
 	void bw_compression(column &c);
 	void getNumberOfBits();
 
@@ -109,8 +111,12 @@ class DataCompressor{
 		return partitioner;
 	}
 
-	uint64_t* getBitVector(){
-	    return bit_vector;
+	void* getBitVector(int offset){
+	    return static_cast<uint64_t *> (bit_vector) + offset;
+	}
+
+	void* getJoinBitVector(int offset){
+	    return static_cast<uint64_t *> (join_vector) + offset;
 	}
 	
 	int getNumOfParts(){

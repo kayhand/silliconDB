@@ -18,7 +18,7 @@
 template <class T> 
 struct Node{
     T value;
-    std::atomic<Node<T>*> next;  
+    std::atomic<Node<T>*> next; 
     Node() : next(nullptr){}
     Node(T value) : value(value), next(nullptr){}
     Node(int r_id, int p_id, int j_type) : next(nullptr){
@@ -38,7 +38,7 @@ class Thread
    int	  pid;
 
    std::vector<Node<T>*> node_pool;
-   int curNodeId = 0;
+   int nextNodeId = 0;
 
   public:
     Thread() : tid(0), running(0), detached(0), pid(0){} 
@@ -48,8 +48,9 @@ class Thread
             pthread_cancel(tid);
     	}
 
-	for(Node<T>* curNode : node_pool)
+	for(Node<T>* curNode : node_pool){
 	    delete curNode;
+	}
     }
 
     int start(int cpuid)
@@ -57,11 +58,12 @@ class Thread
 	pthread_attr_t attr;
     	pthread_attr_init(&attr);
     	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+	node_pool.reserve(10);
 
 	int result = pthread_create(&tid, &attr, runThread, this);
     	if (result == 0) {
         	running = cpuid;
-    		setAffinity(cpuid * 8);
+    		setAffinity(cpuid);
     	}
     	return result;
     }
@@ -131,7 +133,7 @@ class Thread
 	 flags = PA_QUERY;
 	 id_t read_ids[1];
          result = processor_affinity(&ps, &nids, read_ids, &flags);
-         //printf("Affinity set to core number %d\n", read_ids[0]);
+         printf("Affinity set to core number %d\n", read_ids[0]);
 	 return result;
     #endif 
         return cpuid;
@@ -149,41 +151,42 @@ class Thread
     	return ((Thread*)arg)->run();
     }
 
-    void reserveNodes(int num_of_nodes){
-    	node_pool.reserve(num_of_nodes);
-    	node_pool.resize(num_of_nodes);
-    	for(int i = 0; i < num_of_nodes; i++){
-    	    node_pool[i] = new Node<T>();
-	}
-    }
-
     void clearNodes(){
     	for(Node<T> *node : node_pool)
-        	delete node; 
+            delete node; 
     }
+
+    void putFreeNode(Node<T> *node){
+    	//node->next = NULL;
+	node_pool.push_back(node);
+    }
+
 
     Node<T>* returnNextNode(T value){
-	if(curNodeId == 49){
-	    printf("All nodes used!\n");
-	    return NULL;
+    	if(node_pool.size() < 5){
+	    Node<T>* newNode = new Node<T>();
+            newNode->value = value;
+	    return newNode;
 	}
 	else{
-	    Node<T>* curNode = node_pool.at(curNodeId);
-	    curNode->value = value;
-    	    return node_pool.at(curNodeId++);
+            Node<T>* curNode = node_pool[nextNodeId++]; //remove nodes from the front of the vector
+	    curNode->next = NULL;
+            curNode->value = value;
+	    return curNode;
 	}
     }
 
-
     Node<T>* returnNextNode(int r_id, int p_id, int j_type){
-	if(curNodeId == 49){
-	    printf("All nodes used!\n");
-	    return NULL;
+    	if(node_pool.size() < 5){
+	    Node<T>* newNode = new Node<T>();
+            newNode->value.setFields(r_id, p_id, j_type);
+	    return newNode;
 	}
 	else{
-	    Node<T>* curNode = node_pool.at(curNodeId);
-	    curNode->value.setFields(r_id, p_id, j_type);
-    	    return node_pool.at(curNodeId++);
+            Node<T>* curNode = node_pool[nextNodeId++];
+	    curNode->next = NULL;
+            curNode->value.setFields(r_id, p_id, j_type);
+	    return curNode;
 	}
     }
 

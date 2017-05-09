@@ -40,8 +40,6 @@ void Query1::linescan_hw(DataCompressor *dataComp, int scaledPart, Result *resul
     src.elements = num_of_els;
     src.format = DAX_BITS;
     src.elem_width = col->num_of_bits + 1;
-
-    src.data = malloc(src.elements * src.elem_width);
     src.data = col->compressed;
 
     predicate.format = DAX_BITS;
@@ -52,7 +50,9 @@ void Query1::linescan_hw(DataCompressor *dataComp, int scaledPart, Result *resul
     dst.offset = 0;
     dst.format = DAX_BITS;
     dst.elem_width = 1;
-    dst.data = memalign(8192, DAX_OUTPUT_SIZE(dst.elements, dst.elem_width));
+    int num_of_segments = compTable->num_of_segments / dataComp->getNumOfParts();
+    void* bit_vector = dataComp->getBitVector(curPart * num_of_segments);
+    dst.data = bit_vector;
 
     hrtime_t t_start, t_end;
     t_start = gethrtime();
@@ -63,14 +63,6 @@ void Query1::linescan_hw(DataCompressor *dataComp, int scaledPart, Result *resul
     //printf("DAX Count: %lu\n", scan_res.count);
 
     result->addRuntime(DAX_SCAN, make_tuple(t_start, t_end));
-
-    int prev_ind = 10 + (curPart - 1) * compTable->nb_columns;
-    int prev_num_segments = (curPart == 0) ? 0 : (&(compTable->columns[prev_ind]))->num_of_segments;
-    uint64_t* bit_vector = (dataComp->getBitVector() + scaledPart * prev_num_segments);
-    memcpy(bit_vector, dst.data, col->num_of_segments * 8);
-
-    free(src.data);
-    free(dst.data);
 } 
 
 void Query1::linescan_post(DataCompressor *dataComp, dax_queue_t **queue, Query *item)
@@ -114,16 +106,14 @@ void Query1::linescan_post(DataCompressor *dataComp, dax_queue_t **queue, Query 
     dst.offset = 0;
     dst.format = DAX_BITS;
     dst.elem_width = 1;
-    dst.data = memalign(8192, DAX_OUTPUT_SIZE(dst.elements, dst.elem_width));
-
-    int prev_ind = 10 + (curPart - 1) * compTable->nb_columns;
-    int prev_num_segments = (curPart == 0) ? 0 : (&(compTable->columns[prev_ind]))->num_of_segments;
-    uint64_t* bit_vector = (dataComp->getBitVector() + curPart * prev_num_segments);
+    int num_of_segments = compTable->num_of_segments / dataComp->getNumOfParts();
+    void* bit_vector = dataComp->getBitVector(curPart * num_of_segments);
+    dst.data = bit_vector;
 
     item->get_udata().t_start = gethrtime();
     item->get_udata().src_data = src.data;
     item->get_udata().dst_data = dst.data;
-    item->get_udata().bit_vector = bit_vector;
+    item->get_udata().bit_vector = (uint64_t*) bit_vector;
     item->get_udata().copy_size = col->num_of_segments * 8;
 
     void *udata_p = &(item->get_udata());
@@ -177,7 +167,9 @@ void Query1::linescan_hw(DataCompressor *dataComp, int curPart, dax_context_t **
     dst.offset = 0;
     dst.format = DAX_BITS;
     dst.elem_width = 1;
-    dst.data = memalign(8192, DAX_OUTPUT_SIZE(dst.elements, dst.elem_width));
+    int num_of_segments = compTable->num_of_segments / dataComp->getNumOfParts();
+    void* bit_vector = dataComp->getBitVector(curPart * num_of_segments);
+    dst.data = bit_vector;
 
     hrtime_t t_start, t_end;
     t_start = gethrtime();
@@ -197,16 +189,8 @@ void Query1::linescan_hw(DataCompressor *dataComp, int curPart, dax_context_t **
     //printf("Count: %lu\n", scan_res.count - remainder);
 
     //printf("Writing %d bits to bit_vector index %d\n", col->num_of_segments, curPart * col->num_of_segments);
-    int prev_ind = 10 + (curPart - 1) * compTable->nb_columns;
-    int prev_num_segments = (curPart == 0) ? 0 : (&(compTable->columns[prev_ind]))->num_of_segments;
-    uint64_t* bit_vector = (dataComp->getBitVector() + curPart * prev_num_segments);
-    memcpy(bit_vector, dst.data, col->num_of_segments * 8);
-
     pthread_barrier_wait(barrier);
     pthread_barrier_wait(dax_barrier);
-
-    free(src.data);
-    free(dst.data);
 } 
 
 #endif
@@ -234,9 +218,8 @@ void Query1::linescan_sw(DataCompressor *dataComp, int scaledPart, Result *resul
     int total_lines = col->num_of_bits + 1; 
     uint64_t local_res = 0;
     uint64_t data_vector = 0;
-    int prev_ind = 10 + (curPart - 1) * compTable->nb_columns;
-    int prev_num_segments = (curPart == 0) ? 0 : (&(compTable->columns[prev_ind]))->num_of_segments;
-    uint64_t* bit_vector = (dataComp->getBitVector() + scaledPart * prev_num_segments);
+    int num_of_segments = compTable->num_of_segments / dataComp->getNumOfParts();
+    uint64_t* bit_vector = (uint64_t *) dataComp->getBitVector(curPart * num_of_segments);
         
     hrtime_t t_start, t_end;
     t_start = gethrtime();
@@ -282,14 +265,10 @@ void Query1::count(DataCompressor *dataComp, int scaledPart, Result *result){
     int num_of_parts = dataComp->getNumOfParts();
     int sf = dataComp->getScaleFactor();
     int curPart = scaledPart % num_of_parts;
-    int ind = 10 + curPart * compTable->nb_columns;
-    column *col = &(compTable->columns[ind]);
 
-    int prev_ind = 10 + (curPart - 1) * compTable->nb_columns;
-    int prev_num_segments = (curPart == 0) ? 0 : (&(compTable->columns[prev_ind]))->num_of_segments;
-    uint64_t* bit_vector = (dataComp->getBitVector() + scaledPart * prev_num_segments);
+    int num_of_segments = compTable->num_of_segments / dataComp->getNumOfParts();
+    uint64_t* bit_vector = (uint64_t *) dataComp->getBitVector(curPart * num_of_segments);
 
-    int num_of_segments = col->num_of_segments;
     int count = 0;
 
     #ifdef __sun 
@@ -376,11 +355,10 @@ void Query1::agg(DataCompressor *dataComp, int scaledPart, Result *result, bool 
     column *col = &(compTable->columns[ind]);
     int remaining_data = col->end - col->start + 1;
     //std::unordered_map<uint64_t, std::tuple<int, uint64_t>>  local_ht;    
-    std::tuple<int, uint64_t> local_ht[4] = make_tuple(0, 0);
+    std::tuple<int, uint64_t> local_ht[4] = make_tuple(0, 0.0);
 
-    int prev_ind = 10 + (curPart - 1) * compTable->nb_columns;
-    int prev_num_segments = (curPart == 0) ? 0 : (&(compTable->columns[prev_ind]))->num_of_segments;
-    uint64_t *bit_vector = dataComp->getBitVector() + scaledPart * prev_num_segments;
+    int num_of_segments = compTable->num_of_segments / dataComp->getNumOfParts();
+    uint64_t* bit_vector = (uint64_t*) dataComp->getBitVector(curPart * num_of_segments);
     //printf("Part %d : Start segment %d : Bit Vector %lu \n", scaledPart, scaledPart * prev_num_segments, bit_vector[0]);
 
     //<(rf + ls), (l_q, l_ext)> 
@@ -406,6 +384,7 @@ void Query1::agg(DataCompressor *dataComp, int scaledPart, Result *result, bool 
     uint32_t key;
     uint64_t cur_vec;
  
+    //vector<int> indices = Helper::createIndexArray(bit_vector, col, isDax); 
     vector<int> indices = Helper::createIndexArray(bit_vector, col, isDax); 
     /*uint32_t *data_2 = partCols[2]->data;
     uint32_t *data_3 = partCols[2]->data;
@@ -470,7 +449,7 @@ void Query1::agg(DataCompressor *dataComp, int scaledPart, Result *result, bool 
         string second_part = compTable->columns[9].dict[(uint16_t) key];
 
 	agg_r = make_tuple(first_part[0], second_part[0], get<0>(local_ht[i]), get<1>(local_ht[i]));
-    	result->addResult(agg_r);
+    	result->addAggResult(agg_r);
     }
 }
 

@@ -1,5 +1,4 @@
 #include "DataCompressor.h"
-
 using namespace std;
 
 DataCompressor::DataCompressor(string filename, int t_id, Partitioner &partitioner, int sf){
@@ -26,7 +25,7 @@ DataCompressor::~DataCompressor(){
             case column::data_type_t::DOUBLE:
 		t.columns[i].d_keys.clear();
 		t.columns[i].d_pairs.clear();
-		delete[] t.columns[i].i_dict;
+		delete[] t.columns[i].d_dict;
                 break;
 	}
 	delete[] t.columns[i].data;
@@ -35,7 +34,8 @@ DataCompressor::~DataCompressor(){
     delete[] t.columns;
     t.keyMap.clear();
     delete[] distinct_keys;
-    delete[] bit_vector;
+    free(bit_vector);
+    free(join_vector);
 }
 
 void DataCompressor::createTable(){
@@ -43,7 +43,6 @@ void DataCompressor::createTable(){
     t.nb_lines = partitioner->getNumOfElements();
     t.columns = new column [t.nb_columns * num_of_parts];
     vector<string> schema = partitioner->getSchema();
-
     printf("Cols: %d, Els %d, Psize: %d\n", t.nb_columns, t.nb_lines, num_of_parts);
 
     for(int curCol = 0; curCol < t.nb_columns * num_of_parts; curCol++){
@@ -74,7 +73,7 @@ void DataCompressor::parse(){
     string  buff;
     int line = 0;
     int value;
-    double d_value;
+    float d_value;
     vector<string> exploded;
     column *cur_col;
 
@@ -103,7 +102,6 @@ void DataCompressor::parse(){
 		    if(t.columns[actual_col].d_keys.find(d_value) == t.columns[actual_col].d_keys.end()){
 			t.columns[actual_col].d_keys[d_value] = line;
 			distinct_keys[actual_col] += 1;
-			//printf("d_val: %s\n", d_value.c_str());
 		    }
 		    break;
 		case column::data_type_t::STRING:
@@ -123,21 +121,22 @@ void DataCompressor::parse(){
     //Give keys indices in the increasing order
     for(int col = 0; col < t.nb_columns; col++){
 	    int index = 0;
-	    t.columns[col].i_dict = new int[distinct_keys[col]];
+	    if(t.columns[col].i_keys.size() > 0)
+	    	t.columns[col].i_dict = new int[distinct_keys[col]];
+	    else if(t.columns[col].d_keys.size() > 0)
+	    	t.columns[col].d_dict = new double[distinct_keys[col]];
 	    for(auto curPair : t.columns[col].i_keys){
 		t.columns[col].i_keys[curPair.first] = index;
 		t.columns[col].i_dict[index] = curPair.first;
 		index++;
 	    }
 
-	    index = 0;	
 	    for(auto curPair : t.columns[col].d_keys){
 		t.columns[col].d_keys[curPair.first] = index;
-		t.columns[col].i_dict[index] = curPair.first * 100;
+		t.columns[col].d_dict[index] = curPair.first;
 		index++;
 	    }
 
-	    index = 0;	
 	    for(auto curPair : t.columns[col].keys){
 		t.columns[col].keys[curPair.first] = index;
 		t.columns[col].dict[index] = curPair.first;
@@ -150,35 +149,40 @@ void DataCompressor::parse(){
 	int actual_col = col % t.nb_columns;
 	int part_id = col / t.nb_columns;
         cur_col = &(t.columns[col]);
+	if(col >= t.nb_columns){
+	    t.columns[col].i_dict = t.columns[actual_col].i_dict; 
+	    t.columns[col].d_dict = t.columns[actual_col].d_dict; 
+	}
 
         int n_bits = cur_col->num_of_bits;
 	int curPartSize = getPartSize(part_id); //How many data elements in the current part
 
         cur_col->num_of_codes = WORD_SIZE / (n_bits + 1);
         cur_col->codes_per_segment = cur_col->num_of_codes * (n_bits + 1);
-        cur_col->num_of_segments = ceil((double) curPartSize / cur_col->codes_per_segment);
-	if(col % t.nb_columns == 10){
-    		t.num_of_segments += cur_col->num_of_segments; 
-	}
+	cur_col->num_of_segments = partitioner->getSegsPerPart();
+	if(part_id == num_of_parts - 1)
+            cur_col->num_of_segments = ceil((partitioner->getPartitionSize(part_id)) / 64.0);
 
         cur_col->data = new uint32_t[curPartSize];
-	
 	int curInd = 0;
+
 	for(auto &curPair : cur_col->i_pairs){
 		cur_col->data[curInd++] = t.columns[actual_col].i_keys[curPair.first];  //Each partition's data should start from index 0
 	}
-
-	curInd = 0;
 	for(auto &curPair : cur_col->d_pairs){
 		cur_col->data[curInd++] = t.columns[actual_col].d_keys[curPair.first];
 	}
-
-	curInd = 0;
 	for(auto &curPair : cur_col->str_pairs){
 		cur_col->data[curInd++] = t.columns[actual_col].keys[curPair.first];
 	}
     }
-    bit_vector = new uint64_t[t.num_of_segments * this->scale_factor];
+
+    t.num_of_segments = (this->num_of_parts) * partitioner->getSegsPerPart();
+    //t.num_of_segments += ceil((partitioner->getPartitionSize(this->num_of_parts - 1)) / 64.0);
+
+    posix_memalign(&bit_vector, 4096, t.num_of_segments * 8);
+    posix_memalign(&join_vector, 4096, t.num_of_segments * 8);
+
     //Create key map for efficient aggregation
     //Q1 has col[8] and col[9] as keys
     if(this->t_id == 0){ //for lineitem table
@@ -211,10 +215,10 @@ void DataCompressor::bw_compression(column &c){
     int rows = c.num_of_bits + 1;
 
     int shift_amount = 0;
-    int num_of_parts = c.end - c.start + 1;
+    int num_of_els = c.end - c.start + 1;
     int curInd;
 
-    for(int i = 0 ; i < num_of_parts; i++){	    
+    for(int i = 0 ; i < num_of_els; i++){	    
 	newVal = c.data[i];
         curSegment = values_written / c.codes_per_segment;
         if(curSegment >= c.num_of_segments)
@@ -225,8 +229,6 @@ void DataCompressor::bw_compression(column &c){
         }
         rowId = codes_written % (c.num_of_bits + 1);
 	shift_amount = (codes_written / (c.num_of_bits + 1)) * (c.num_of_bits + 1);
-	//if(c.column_id == 49)
-	    //printf("CurVal: %lu, id: %d \n", newVal, i);
 
 	newVal <<= (WORD_SIZE - (c.num_of_bits + 1));
 	newVal >>= shift_amount;
@@ -271,45 +273,37 @@ void DataCompressor::bw_compression(column &c){
     */
 }
 
-void DataCompressor::actual_compression(column &c){
+void DataCompressor::bit_compression(column &c){
     uint64_t newVal = 0, prevVal = 0;
     uint64_t writtenVal = 0;
-    unsigned long lineIndex = 0;
-    unsigned long curIndex = 0, prevIndex = 0;
+    unsigned long curIndex = 0;
 
-    int bits_written = 0;
-    int bits_remaining = 0;
+    int bits_remaining = 64;
 
-    for(int i = c.start ; i <= c.end; i++){	    
+    int num_of_bits = c.num_of_bits + 1;
+    int num_of_els = c.end - c.start + 1;
+    for(int i = 0; i < num_of_els; i++){	    
 	    newVal = c.data[i];
-	    newVal = newVal << (64 - c.num_of_bits);
-	    curIndex = ((lineIndex) * c.num_of_bits / 64);
-
-	    if(curIndex != prevIndex){
-		    c.compressed[prevIndex] = writtenVal;
-		    bits_remaining = bits_written - 64;
-		    bits_written = 0;
-
-		    if(bits_remaining > 0){
-			    writtenVal = prevVal << (c.num_of_bits - bits_remaining); 
-			    bits_written = bits_remaining;
-			    writtenVal = (writtenVal) | (newVal >> bits_written);
-			    bits_written += c.num_of_bits;
-		    }
-		    else {
-			    writtenVal = (uint64_t) newVal;
-			    bits_written += c.num_of_bits;
-		    }
-	    }
-	    else{
-		writtenVal = (writtenVal) | ((uint64_t) newVal >> bits_written);
-		bits_written += c.num_of_bits;
+	    if(bits_remaining < 0){
 		c.compressed[curIndex] = writtenVal;
+	    	bits_remaining += 64;
+		curIndex++;
+		writtenVal = prevVal << bits_remaining; 
 	    }
-	    prevIndex = curIndex;
+	    else if (bits_remaining == 0){
+		c.compressed[curIndex] = writtenVal;
+		bits_remaining = 64;
+		writtenVal = 0;
+		curIndex++;
+	    }
+	    bits_remaining -= num_of_bits;
+	    if(bits_remaining >= 0)
+	        writtenVal |= newVal << bits_remaining;
+	    else
+	        writtenVal |= newVal >> (bits_remaining * -1);
 	    prevVal = newVal;
-	    lineIndex++;
     }
+    c.compressed[curIndex] = writtenVal;
 }
 
 void DataCompressor::getNumberOfBits(){
@@ -331,7 +325,13 @@ void DataCompressor::getNumberOfBits(){
 	        n_bits++;
 	    n_bits = pow(2, n_bits) - 1;
 	}
+	if(n_bits >= 15)
+	    n_bits = 23;
         t.columns[col].num_of_bits = n_bits;
+	//printf("%d->%d\n", col, t.columns[col].num_of_bits);
+	//if(n_bits > 23)
+            //t.columns[col].num_of_bits = 23;
+	//printf("%d->%d\n", col, t.columns[col].num_of_bits);
     }
 }
 
@@ -340,11 +340,11 @@ void DataCompressor::compress(){
     for(int col = 0; col < t.nb_columns * num_of_parts; col++){
         cur_col = &(t.columns[col]);
 
-	//int part_id = col / t.nb_columns;
-	//int compLines = getCompLines(part_id);
-        cur_col->compressed = new uint64_t[cur_col->num_of_segments * (cur_col->num_of_bits + 1)]();
-        //actual_compression(t.columns[col]);
-        bw_compression(*cur_col);
+	int part_id = col / t.nb_columns;
+	int compLines = getCompLines(part_id); // gets segment size for that partition
+        cur_col->compressed = new uint64_t[compLines * (cur_col->num_of_bits + 1)]();
+        bit_compression(*cur_col);
+        //bw_compression(*cur_col);
     }
 }
 
@@ -353,9 +353,8 @@ std::vector<std::string> explode(std::string const & s, char delim){
     std::istringstream iss(s);
 
     std::string token;
-    while(std::getline(iss, token, delim))
-    {
-        result.push_back(std::move(token));
+    while(std::getline(iss, token, delim)){
+        result.push_back(token);
     }
 
     token.clear();

@@ -21,10 +21,19 @@ template <typename T> class WorkQueue
     atomic<Node<T>*> tail;
     public:
         WorkQueue(){}
+
+        WorkQueue(int q_id){
+	    this->mq_id = q_id;
+	    T dummy;
+	    head.store(new Node<T>(dummy));
+	    tail.store(head.load());
+        }
+
         WorkQueue(int q_id, DataLoader *dataLoader){
 	    this->mq_id = q_id;
 	    this->dataLoader = dataLoader;
-	    head.store(new Node<T>);
+	    T dummy;
+	    head.store(new Node<T>(dummy));
 	    tail.store(head.load());
         }
 
@@ -36,22 +45,14 @@ template <typename T> class WorkQueue
 	}
 
         ~WorkQueue() {	    
-        /*  Node<T> *curr = head;
-	    Node<T> *temp = curr;
-	    while(temp->next){
-		curr = curr->next;
-		delete temp;
-		temp = curr;
-	    }
-	    delete temp;*/
 	}
 
     Node<T>* getHead(){
-        return head;
+        return head.load(std::memory_order_relaxed);
     }
 
     Node<T>* getTail(){
-        return tail;
+        return tail.load(std::memory_order_relaxed);
     }
 
     void printQueue(){
@@ -112,37 +113,33 @@ template <typename T> class WorkQueue
 	}
     }
 
-    T remove_ref_dax(){
+    Node<T>* remove_ref_dax(){
 	while(true){
 	    Node<T> *first = head.load(std::memory_order_relaxed);
 	    Node<T> *last = tail.load(std::memory_order_relaxed);
 	    Node<T> *next = (first->next).load(std::memory_order_relaxed);
-	    if(next->value.getTableId() != 0){ //This happens when table id is 1 (aggegation) and resource id is 1 (DAX) unit;
-	    	T dummy;
-	        return dummy; //part_id == -1
-	    }
 	    if(first == head){
 	        if(first == last){
 		    if(next == NULL){
 		    	tail.compare_exchange_weak(last, next);
 		    	printf("Queue is empty!\n!");
-	    		T dummy;
-		        return dummy; //part_id == -1
+			return NULL;
 		    }
 		    tail.compare_exchange_weak(last, next);
-
 		}
 		else{
-		    T value = next->value;
-		    if(head.compare_exchange_weak(first, next)){
-			return value;
+	    	    if(next->value.getTableId() == 4){ //This happens when table id is 4 (aggegation) and resource id is 1 (DAX) unit;
+		        return NULL;
+	            }
+		    else if(head.compare_exchange_weak(first, next)){
+			return next;
 		    }
 		}
 	    }	
 	}
     }
 
-    T remove_ref_core(){
+    Node<T>* remove_ref_core(){
 	while(true){
 	    Node<T> *first = head.load(std::memory_order_relaxed);
 	    Node<T> *last = tail.load(std::memory_order_relaxed);
@@ -152,15 +149,16 @@ template <typename T> class WorkQueue
 		    if(next == NULL){
 		    	tail.compare_exchange_weak(last, next);
 		    	printf("Queue is empty!\n!");
-			T dummy;
-			return dummy;
+			return NULL;
 		    }
 		    tail.compare_exchange_weak(last, next);
 		}
 		else{
-		    if(head.compare_exchange_weak(first, next)){
-		    	T value = next->value;
-			return value;
+	    	    if(next->value.getTableId() == 55){ 
+		        return NULL;
+	            }
+		    else if(head.compare_exchange_weak(first, next)){
+			return next;
 		    }
 		}
 	    }	

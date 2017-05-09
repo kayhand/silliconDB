@@ -4,107 +4,118 @@
 #include <vector>
 #include <fcntl.h>
 
-#include "../thread/Thread.h"
-#include "../network/server/TCPAcceptor.h"
-#include "../data/DataLoader.h"
-#include "../util/Partitioner.h"
-#include "../util/Query.h"
-#include "../util/Query1.h"
-#include "util/WorkQueue.h"
+#include "../../thread/Thread.h"
+#include "../../network/server/TCPAcceptor.h"
+#include "../../data/DataLoader.h"
+#include "../../log/Result.h"
+#include "../../util/Partitioner.h"
+#include "../../util/Query.h"
+#include "../../util/Query1.h"
+#include "../util/WorkQueue.h"
 
 std::atomic<int> li_cnt = ATOMIC_VAR_INIT(0);
+std::atomic<int> c_cnt = ATOMIC_VAR_INIT(0);
 
 pthread_barrier_t barrier;
-pthread_mutex_t queue_mutex;
-pthread_cond_t queue_cond;
-
-bool done = 0;
+pthread_barrier_t end_barrier;
 
 class CoreHandler : public Thread<Query>
 {
-	WorkQueue<Query> *scan_queue;
+	WorkQueue<Query> *sw_queue;
+	WorkQueue<Query> *shared_queue;
 	TCPStream* t_stream;
 	int loop_id = 0;
-	DataCompressor *lineitemComp = scan_queue->getDataLoader()->getDataCompressor(0);
+	DataCompressor *lineitemComp = sw_queue->getDataLoader()->getDataCompressor(0);
 	Result result;
 	Query item;
+	Node<Query> *node_item;
 
 	public:
-	    CoreHandler(WorkQueue<Query>* queue) : scan_queue(queue){}
+	    CoreHandler(WorkQueue<Query>* sw_queue) : sw_queue(sw_queue){}
+	    CoreHandler(WorkQueue<Query>* sw_queue, WorkQueue<Query>* shared_queue) : sw_queue(sw_queue), shared_queue(shared_queue){}
 
 	void *run(){
 		pthread_barrier_wait(&barrier);
-		for(int i = 0; ; i++){
-			while(scan_queue->getHead() != scan_queue->getTail()){
-				item = scan_queue->remove_ref_core();
-				//printf("Got from table id %d, partition %d - loop: %d in thread %d! :: \n", item.getTableId(), item.getPart(), loop_id++, this->getId());
-				if(item.getTableId() == 0){
-				    Query1::linescan_sw(lineitemComp, item.getPart(), &result);
-				    li_cnt++;
-				    addNewJob(0, item.getPart(), 2); //(0: hw/sw - 1:sw only, part_id, job type) -- scan or agg or count
-				}
-				else{
-				    Query1::agg(lineitemComp, item.getPart(), &result, item.isDax());
-				    //Query1::count(lineitemComp, item.getPart());
-				}
+		while(true){
+			if(sw_queue->getHead() != sw_queue->getTail()){
+			    node_item = sw_queue->remove_ref_core();
+			    item = node_item->value;
+			    printf("Core got job id %d, partition %d - loop: %d in thread %d! dax? %d\n", item.getTableId(), item.getPart(), loop_id++, this->getId(), item.isDax());
+			    //std::atomic_fetch_add(&c_cnt, 1);
+			    Query1::agg(lineitemComp, item.getPart(), &result, item.isDax());
 			}
-	    	        t_stream->send("", 0);
-			return NULL;
+			else if(shared_queue->getHead() != shared_queue->getTail()){
+			    	node_item = shared_queue->remove_ref_core();
+			    	item = node_item->value;
+			    	printf("Core' got job id %d, partition %d - loop: %d in thread %d!\n", item.getTableId(), item.getPart(), loop_id++, this->getId());
+				
+				Query1::linescan_sw(lineitemComp, item.getPart(), &result);
+				//std::atomic_fetch_add(&li_cnt, 1);
+				this->putFreeNode(node_item);
+				addNewJob(0, item.getPart(), 2);
+			}
+			else{
+				pthread_barrier_wait(&end_barrier);
+	    	        	t_stream->send("", 0);
+				return NULL;
+			}
 		}
 		return(0);
 	}
-
-	Result &getResult(){
-	    return result;
-	}
-
+	
 	void addNewJob(int r_id, int p_id, int j_type){
-	    //Query item(r_id, p_id, j_type);
  	    Node<Query> *newNode = this->returnNextNode(r_id, p_id, j_type);
- 	    //Node<Query> *newNode = this->returnNextNode(item);
-            scan_queue->add(newNode);		
+            sw_queue->add(newNode);		
 	}
 
 	void setStream(TCPStream* stream){
 		this->t_stream = stream;
+	}
+
+	Result &getResult(){
+	    return result;
 	}
 };
 
 #ifdef __sun 
 class DaxHandler : public Thread<Query>
 {
-	WorkQueue<Query> *scan_queue;
+	WorkQueue<Query> *sw_queue;
+	WorkQueue<Query> *shared_queue;
 	TCPStream* t_stream;
 	dax_context_t *ctx;
-	dax_queue_t *queue;
-	int loop_id = 0;
-	DataCompressor *lineitemComp = scan_queue->getDataLoader()->getDataCompressor(0);
+	DataCompressor *lineitemComp = shared_queue->getDataLoader()->getDataCompressor(0);
 	Result result;
+	int num_of_parts = lineitemComp->getNumOfParts();
 	Query item;
+	Node<Query> *node_item;
+
+	int loop_id = 0;
 
 	public:
-	    DaxHandler(WorkQueue<Query>* queue) : scan_queue(queue){}
+	    DaxHandler(WorkQueue<Query>* shared_queue) : shared_queue(shared_queue){}
+	    DaxHandler(WorkQueue<Query>* sw_queue, WorkQueue<Query>* shared_queue) : sw_queue(sw_queue), shared_queue(shared_queue){}
 
 	void *run(){
 		createDaxContext();
 		pthread_barrier_wait(&barrier);
-		for(int i = 0; ; i++){
-			while(scan_queue->getHead() != scan_queue->getTail()){
-				item = scan_queue->remove_ref_dax();
-				if(item.getPart() == -1){
-				    scan_queue->printQueue();
-			  	    break;
-				}
-				//printf("DAX got from table id %d, partition %d - loop: %d in thread %d!\n", item.getTableId(), item.getPart(), loop_id++, this->getId());
-				if(item.getTableId() == 0){
-				    Query1::linescan_hw(lineitemComp, item.getPart(), &result, &ctx);
-				    li_cnt++;
+		while(true){
+			if(shared_queue->getHead() != shared_queue->getTail()){
+			    node_item = shared_queue->remove_ref_dax(); //We don't need the check as in ref_dax function
+			    item = node_item->value;
+			    printf("DAX got job id %d, partition %d - loop: %d in thread %d!\n", item.getTableId(), item.getPart(), loop_id++, this->getId());
+			    Query1::linescan_hw(lineitemComp, item.getPart(), &result, &ctx);
+			    //std::atomic_fetch_add(&li_cnt, 1);
 
-				    addNewJob(1, item.getPart(), 2);
-				}
+			    this->putFreeNode(node_item);
+			    addNewJob(1, item.getPart(), 2);
 			}
-			t_stream->send("", 0);
-			return NULL;
+			else{
+			    //Wait for cores to finish
+			    pthread_barrier_wait(&end_barrier);
+			    t_stream->send("", 0);
+			    return NULL;
+			}
 		}
 		return(0);
 	}
@@ -118,22 +129,16 @@ class DaxHandler : public Thread<Query>
 	}
 
 	void addNewJob(int r_id, int p_id, int j_type){
-	    //Query agg_item(r_id, p_id, j_type); 
-	    //agg_item.flipDax();
  	    Node<Query> *newNode = this->returnNextNode(r_id, p_id, j_type);
 	    newNode->value.flipDax();
-            scan_queue->add(newNode);		
+            sw_queue->add(newNode);		
 	}
 
 	void createDaxContext(){
 	    	//int lFile = open("/tmp/dax_log.txt", O_RDWR);
-
 		dax_status_t res = dax_thread_init(1, 1, 0, NULL, &ctx);
 		if(res != 0)
 			printf("Problem with DAX Context Creation! Return code is %d.\n", res);
-		res = dax_queue_create(ctx, 5, &queue);
-		if(res != 0)
-			printf("Problem with DAX Queue Creation! Return code is %d.\n", res);
 		//res = dax_set_log_file(ctx, DAX_LOG_ALL, lFile);
 		//if(res != 0)
 			//printf("Problem with DAX Logger Creation! Return code is %d.\n", res);
@@ -147,22 +152,21 @@ class ProcessingUnit{
 	DaxHandler *dax_handler;
 	#endif
 	int num_of_units;
-	WorkQueue<Query> job_queue;     
-	vector<Node<Query>*> initialNodes;
+	WorkQueue<Query> sw_queue;     
+	WorkQueue<Query> shared_queue;     
 
 	public: 
- 	    ProcessingUnit(int num_of_threads, WorkQueue<Query> queue) : num_of_units(num_of_threads), job_queue(queue){}
+ 	    ProcessingUnit(int num_of_threads, WorkQueue<Query> sw_queue, WorkQueue<Query> shared_queue) : num_of_units(num_of_threads), sw_queue(sw_queue), shared_queue(shared_queue){}
 
 	void createProcessingUnit(){
 	    conn_handlers.reserve(50);
-	    initialNodes.reserve(100);
 	    for(int i = 0; i < num_of_units; i++){
-		CoreHandler *handler = new CoreHandler(&job_queue);
+		CoreHandler *handler = new CoreHandler(&sw_queue, &shared_queue);
 		handler->setId(i);
 		conn_handlers.push_back(handler);	
 	    }
 	    #ifdef __sun 
-	    dax_handler = new DaxHandler(&job_queue);
+	    dax_handler = new DaxHandler(&sw_queue, &shared_queue);
 	    dax_handler->setId(num_of_units);
 	    #endif
 	}
@@ -171,8 +175,7 @@ class ProcessingUnit{
 	    for(int part_id = 0; part_id < num_of_parts; part_id++){
 	    	Query item(part_id % 2, part_id, table_id); //(0: sw - 1:hw, part_id, table_id)
 	    	Node<Query> *newNode = new Node<Query>(item);
-	    	job_queue.add(newNode);
-    	   	initialNodes.push_back(newNode);
+	    	shared_queue.add(newNode);
 	    }
 	}	
 
@@ -180,12 +183,10 @@ class ProcessingUnit{
 	    for(CoreHandler* curConn : conn_handlers){
 	        curConn->setStream(connection);
 	        curConn->start(curConn->getId());
-		curConn->reserveNodes(50);
  	    }
 	    #ifdef __sun 
 	    dax_handler->setStream(connection);
 	    dax_handler->start(dax_handler->getId());
-	    dax_handler->reserveNodes(50);
 	    #endif
 	}
 
@@ -198,12 +199,16 @@ class ProcessingUnit{
  	    }
 	}
 
-	WorkQueue<Query> &getJobQueue(){
-	    return job_queue;
+	WorkQueue<Query> &getSharedQueue(){
+	    return shared_queue;
+	}
+
+	WorkQueue<Query> &getSWQueue(){
+	    return sw_queue;
 	}
 
 	void printResults(){
-	    DataCompressor *lineitemComp = job_queue.getDataLoader()->getDataCompressor(0);
+	    DataCompressor *lineitemComp = sw_queue.getDataLoader()->getDataCompressor(0);
 	    int count = 0;
 	    for(int ind = 0; ind < lineitemComp->getTable()->num_of_segments; ind++){
 	        count += __builtin_popcountl(lineitemComp->getBitVector()[ind]);
@@ -253,18 +258,18 @@ class ProcessingUnit{
 	    #ifdef __sun 
 	    delete dax_handler;
 	    #endif
-	    Node<Query> *head = job_queue.getHead();
-	    delete head;
-	    for(Node<Query> *curNode : initialNodes){
-	    	delete curNode;
-	    }
+
+	    Node<Query> *sw_head = sw_queue.getHead();
+	    delete sw_head;
+	    Node<Query> *shared_head = shared_queue.getHead();
+	    delete shared_head;
 	}	
 };
 
 int main(int argc, char** argv)
 {
-	if ( argc < 6 ) {
-		printf("usage: %s <workers> <port> <ip> <fileName> <part_size> [scale_factor] \n", argv[0]);
+	if ( argc != 6 ) {
+		printf("usage: %s <workers> <port> <ip> <fileName> <part_size> [scale_factor]\n", argv[0]);
 		exit(-1);
 	}
 
@@ -273,11 +278,13 @@ int main(int argc, char** argv)
 	string ip = argv[3];
 	string fileName = argv[4];
 	int part_size = atoi(argv[5]);
+	
 	int sf = 1;
-	//if(argc == 7)
-	  //  sf = atoi(argv[6]);
+	//if( argc == 7)
+	    //sf = atoi(argv[6]);
 
 	pthread_barrier_init(&barrier, NULL, workers + 1); 
+	pthread_barrier_init(&end_barrier, NULL, workers + 1); 
 
 	/*Lineitem table*/
 	Partitioner line_part;
@@ -290,6 +297,7 @@ int main(int argc, char** argv)
 	data_loader.compressTable(0);
 
 	TCPAcceptor* connectionAcceptor;
+	//connectionAcceptor = new TCPAcceptor(port, (char*)ip.c_str());
 	connectionAcceptor = new TCPAcceptor(port, (char*)ip.c_str());
 	if (!connectionAcceptor || connectionAcceptor->start() != 0) {
 		printf("Could not create a connection acceptor\n");
@@ -299,13 +307,15 @@ int main(int argc, char** argv)
 	std::vector<ProcessingUnit> proc_units;
     	proc_units.reserve(10);
 	
-	WorkQueue<Query> scan_queue(0, &data_loader); 
+	WorkQueue<Query> sw_queue(0, &data_loader); 
+	WorkQueue<Query> shared_queue(0, &data_loader); 
+
         for(int i = 0; i < 1; i++){
-	    ProcessingUnit proc_unit (workers, scan_queue);
+	    ProcessingUnit proc_unit (workers, sw_queue, shared_queue);
 	    proc_unit.createProcessingUnit();
 	    proc_unit.addWork(line_part.getNumberOfParts(), 0);
 	    proc_units.push_back(proc_unit);
-	    scan_queue.printQueue();
+	    shared_queue.printQueue();
         }
 
         int numberOfConnections = 1;
@@ -327,13 +337,14 @@ int main(int argc, char** argv)
 
 	    numberOfConnections--;
 	    pthread_barrier_destroy(&barrier);
+	    pthread_barrier_destroy(&end_barrier);
 	    delete connection;
         }   
 
     delete connectionAcceptor;
 
     for(ProcessingUnit proc_unit : proc_units){
-    	proc_unit.writeResults();
+	proc_unit.writeResults();
     	//proc_unit.printResults();
         proc_unit.clearResources();
     }

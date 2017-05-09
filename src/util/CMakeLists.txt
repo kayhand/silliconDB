@@ -3,6 +3,8 @@ set(UTIL_SRC
     Partitioner.cpp
     Query1.h
     Query1.cpp
+    Query3.h
+    Query3.cpp
 )
 
 link_directories(/opt/dax)
