@@ -121,7 +121,7 @@ template <typename T> class WorkQueue
 	    if(first == head){
 	        if(first == last){
 		    if(next == NULL){
-		    	tail.compare_exchange_weak(last, next);
+		    	//tail.compare_exchange_weak(last, next);
 		    	printf("Queue is empty!\n!");
 			return NULL;
 		    }
@@ -147,7 +147,7 @@ template <typename T> class WorkQueue
 	    if(first == head){
 	        if(first == last){
 		    if(next == NULL){
-		    	tail.compare_exchange_weak(last, next);
+		    	//tail.compare_exchange_weak(last, next);
 		    	printf("Queue is empty!\n!");
 			return NULL;
 		    }

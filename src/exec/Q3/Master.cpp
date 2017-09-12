@@ -38,7 +38,6 @@ class CoreHandler : public Thread<Query>{
 		pthread_barrier_wait(&barrier);
 		for(int i = 0; ; i++){
 		    while(work_queue->getHead() != work_queue->getTail()){
-		    	work_queue->printQueue();
 			node_item = work_queue->remove_ref_core();
 			if(node_item == NULL){
 			    work_queue->printQueue();
@@ -126,7 +125,7 @@ class DaxHandler : public Thread<Query>
 	Node<Query> *node_item;
 
 	dax_queue_t *dax_queue;
-	static const int q_size = 1;
+	static const int q_size = 4;
 	int items_done = dax_status_t::DAX_EQEMPTY;
 	bool daxDone = false;
 
@@ -136,10 +135,12 @@ class DaxHandler : public Thread<Query>
 	    DaxHandler(WorkQueue<Query>* queue) : work_queue(queue){}
 
 	void *run(){
-		createDaxContext(&dax_queue);
+		createDaxContext(&dax_queue, q_size);
 		pthread_barrier_wait(&barrier);
 		for(int i = 0; ; i++){
 			if(daxDone){
+			    printf("DAX DONE! (%d)\n", items_done);
+
 			    printf("DAX on agg_barrier now!\n");
 		       	    pthread_barrier_wait(&agg_barrier);
 	    	    	    work_queue->printQueue();
@@ -151,33 +152,45 @@ class DaxHandler : public Thread<Query>
 			    return NULL;
 			}
 			else if(work_queue->getHead() != work_queue->getTail()){
-			    if(items_done == dax_status_t::DAX_EQEMPTY){
-			    	work_queue->printQueue();
+    			    dax_poll_t poll_data[q_size];			    
+			    items_done = dax_poll(dax_queue, poll_data, 1, -1);
+			    int new_jobs = 0;
+
+			    if(items_done == 0){
+			        continue;
+			    }
+			    else if(items_done > 0){
+			        handlePollReturn(items_done, poll_data);
+				new_jobs = items_done;
+			    }
+			    else{
+			    	new_jobs = q_size; 
+			    }
+
+			    work_queue->printQueue();
+			    printf("\nDax will push %d new jobs\n\n", new_jobs);
+			    for(int job_id = 0; job_id < new_jobs; job_id++){
+			    	printf("%d ...\n", job_id);
 			        node_item = work_queue->remove_ref_dax();
 			        if(node_item == NULL){ //Aggregation job -- DAX is done
-			            daxDone = true;
-				    printf("DAX DONE!\n");
-				    continue;
+			            break;
 		                }
 				else{
-				    postWorkToDAX(node_item->value);
-				    items_done = 0;
+			            postWorkToDAX(node_item->value);
 				}
 			    }
 			}
-			//TODO: Check the case where work_queue is empty but there are still elements in dax internal queue
-			else if(items_done == dax_status_t::DAX_EQEMPTY){
-				    printf("DAX DONE!\n");
-				    daxDone = true;
-				    continue;
-			}
-
-			dax_poll_t poll_data[q_size];
-			items_done = dax_poll(dax_queue, poll_data, 1, -1);
-			//items_done = dax_status_t::DAX_EQEMPTY;
-			if(items_done > 0){
-			    handlePollReturn(items_done, poll_data);
-			    items_done = dax_status_t::DAX_EQEMPTY;
+			else{
+			    //Work_queue is empty but there are still elements in dax internal queue
+    			    dax_poll_t poll_data[q_size];
+			    printf("Wrapping up...\n");
+			    items_done = 0;
+			    while(items_done != dax_status_t::DAX_EQEMPTY){ // busy polling
+			        items_done = dax_poll(dax_queue, poll_data, 1, -1);
+			        if(items_done > 0)
+			            handlePollReturn(items_done, poll_data);			
+			    }
+			    daxDone = true;
 			}
 		}
 		return(0);
@@ -215,13 +228,13 @@ class DaxHandler : public Thread<Query>
             work_queue->add(newNode);		
 	}
 
-	void createDaxContext(dax_queue_t **queue){
+	void createDaxContext(dax_queue_t **queue, int q_size){
 	    	int lFile = open("/tmp/dax_log.txt", O_RDWR);
 
 		dax_status_t res = dax_thread_init(1, 1, 0, NULL, &ctx);
 		if(res != 0)
 			printf("Problem with DAX Context Creation! Return code is %d.\n", res);
-		res = dax_queue_create(ctx, 1, queue);
+		res = dax_queue_create(ctx, q_size, queue);
 		if(res != 0)
 			printf("Problem with DAX Queue Creation! Return code is %d.\n", res);
 		res = dax_set_log_file(ctx, DAX_LOG_ALL, lFile);
