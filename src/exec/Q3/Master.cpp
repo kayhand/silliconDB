@@ -20,36 +20,37 @@ pthread_barrier_t agg_barrier;
 pthread_barrier_t end_barrier;
 
 class CoreHandler : public Thread<Query>{
-	WorkQueue<Query> *scan_queue;
-	WorkQueue<Query> *join_queue;
+	WorkQueue<Query> *work_queue;
 	TCPStream* t_stream;
 	int loop_id = 0;
-	DataCompressor *lineitemComp = scan_queue->getDataLoader()->getDataCompressor(0);
-	DataCompressor *ordersComp = scan_queue->getDataLoader()->getDataCompressor(1);
+	DataCompressor *lineitemComp = work_queue->getDataLoader()->getDataCompressor(0);
+	DataCompressor *ordersComp = work_queue->getDataLoader()->getDataCompressor(1);
 	Result result;
 	Query item;
 	Node<Query> *node_item;
 	bool agg_barr = false;
+	bool daxDone = false;
 
 	public:
-	    CoreHandler(WorkQueue<Query>* queue, WorkQueue<Query>* j_queue) : scan_queue(queue), join_queue(j_queue){}
+	    CoreHandler(WorkQueue<Query>* queue) : work_queue(queue){}
 
 	void *run(){
 		pthread_barrier_wait(&barrier);
 		for(int i = 0; ; i++){
-		    while(scan_queue->getHead() != scan_queue->getTail()){
-			node_item = scan_queue->remove_ref_core();
+		    while(work_queue->getHead() != work_queue->getTail()){
+		    	work_queue->printQueue();
+			node_item = work_queue->remove_ref_core();
 			if(node_item == NULL){
-			    scan_queue->printQueue();
-			    printf("core waiting...\n");
-		    	    pthread_barrier_wait(&agg_barrier);
+			    work_queue->printQueue();
+			    printf("CORE WAITING...\n");
+		    	    //pthread_barrier_wait(&agg_barrier);
 			    agg_barr = true;
 			    printf("core continues...\n");
 			    continue;
 			}
 			item = node_item->value;
 			if(item.getTableId() == 0){
-			    printf("Core got from table id %d, partition %d - loop: %d in thread %d!\n", item.getTableId(), item.getPart(), loop_id++, this->getId());
+			    printf("sw_line(%d) in thr. %d (%d itr.)\n", item.getPart(), this->getId(), loop_id++);
 			    //Query3::linescan_sw(lineitemComp, item.getPart(), &result);
 			    Query3::linescan_simd(lineitemComp, item.getPart(), &result);
 			    li_cnt++;
@@ -58,7 +59,7 @@ class CoreHandler : public Thread<Query>{
 			    addNewJob(0, item.getPart(), 11); //(0: hw/sw - 1:sw only, part_id, job type) -- join job
 			}
 			else if(item.getTableId() == 1){
-			    printf("Core got from table id %d, partition %d - loop: %d in thread %d!\n", item.getTableId(), item.getPart(), loop_id++, this->getId());
+			    printf("sw_order(%d) in thr. %d (%d itr.)\n", item.getPart(), this->getId(), loop_id++);
 			    Query3::orderscan_simd(ordersComp, item.getPart(), &result);
 			    o_cnt++;
 			    //put free node to thread local free list
@@ -66,24 +67,33 @@ class CoreHandler : public Thread<Query>{
 			    //addNewJob(0, item.getPart(), 3); //(0: hw/sw - 1:sw only, part_id, job type)
 			}
 			else if(item.getTableId() == 4){
-			    printf("Core got an aggregation job for partition %d - loop: %d in thread %d!\n", item.getPart(), loop_id++, this->getId());
+			    printf("agg(%d) in thr. %d (%d itr.)\n", item.getPart(), this->getId(), loop_id++);
 			    Query3::agg<uint32_t, uint32_t, uint8_t>(lineitemComp, item.getPart(), &result);
 			    //Query3::count(orderComp, item.getPart(), &result);
 			    this->putFreeNode(node_item);
 			}
 			else if(item.getTableId() == 11){
-			    printf("Core got a join job for part %d\n", item.getPart());
+			    printf("sw_join(%d) in thr. %d (%d itr.)\n", item.getPart(), this->getId(), loop_id++);
 			    Query3::join_sw(lineitemComp, ordersComp, item.getPart(), &result);
 		            this->putFreeNode(node_item);
-			    addNewJob(1, item.getPart(), 4); //add agg job -- id = 4
+			    //addNewJob(1, item.getPart(), 4); //add agg job -- id = 4
 			}
 		    }
-		    if(!agg_barr)
+		    if(!daxDone){
+			printf("Core on agg_barrier...\n");
 		    	pthread_barrier_wait(&agg_barrier);
-		    pthread_barrier_wait(&end_barrier);
-	            t_stream->send("", 0);
-		    return NULL;
+			daxDone = true;
+		    }
+		    else{
+		    	break;
+		    }
 		}
+		
+		printf("Core on end_barrier...\n");
+		pthread_barrier_wait(&end_barrier);
+		printf("Core releasing...\n");
+	        t_stream->send("", 0);
+		return NULL;
 		return(0);
 	}
 
@@ -93,11 +103,7 @@ class CoreHandler : public Thread<Query>{
 
 	void addNewJob(int r_id, int p_id, int j_type){
  	    Node<Query> *newNode = this->returnNextNode(r_id, p_id, j_type);
-            //join_queue->add(newNode);		
-//	    if(j_type == 11)
-  //              join_queue->add(newNode);		
-//	    else
-                scan_queue->add(newNode);		
+            work_queue->add(newNode);		
 	}
 
 	void setStream(TCPStream* stream){
@@ -108,85 +114,91 @@ class CoreHandler : public Thread<Query>{
 #ifdef __sun 
 class DaxHandler : public Thread<Query>
 {
-	WorkQueue<Query> *scan_queue;
-	WorkQueue<Query> *join_queue;
+	WorkQueue<Query> *work_queue;
 	TCPStream* t_stream;
 	dax_context_t *ctx;
 	int loop_id = 0;
-	DataCompressor *lineitemComp = scan_queue->getDataLoader()->getDataCompressor(0);
-	DataCompressor *ordersComp = scan_queue->getDataLoader()->getDataCompressor(1);
+	DataCompressor *lineitemComp = work_queue->getDataLoader()->getDataCompressor(0);
+	DataCompressor *ordersComp = work_queue->getDataLoader()->getDataCompressor(1);
 	int o_parts = ordersComp->getNumOfParts();
 	Result result;
 	Query item;
 	Node<Query> *node_item;
 
+	dax_queue_t *dax_queue;
+	static const int q_size = 1;
+	int items_done = dax_status_t::DAX_EQEMPTY;
+	bool daxDone = false;
+
+	vector<Node<Query>*> items; 
+
 	public:
-	    DaxHandler(WorkQueue<Query>* queue, WorkQueue<Query>* j_queue) : scan_queue(queue), join_queue(j_queue){}
+	    DaxHandler(WorkQueue<Query>* queue) : work_queue(queue){}
 
 	void *run(){
-		createDaxContext();
+		createDaxContext(&dax_queue);
 		pthread_barrier_wait(&barrier);
 		for(int i = 0; ; i++){
-/*			if(o_parts == o_cnt){
-			    if(join_queue->getHead() != join_queue->getTail()){
-				node_item = join_queue->remove_ref_dax();
-				item = node_item->value;
-				if(item.getTableId() == 11){
-				    printf("DAX got a join job for part %d\n", item.getPart());
-				    Query3::join_hw(lineitemComp, ordersComp, item.getPart(), &result, &ctx);
-			            this->putFreeNode(node_item);
-				    //addNewJob(1, item.getPart(), 22); //add count job -- id = 3
-				}
-				else{
-				    printf("DAX got a count job for part %d\n", item.getPart());
-				    Query3::count(lineitemComp, item.getPart(), &result);
-			            this->putFreeNode(node_item);
-			        }
-			    }	
-			    else{
-		    		pthread_barrier_wait(&end_barrier);
-				t_stream->send("", 0);
-				return NULL;
-			    }
-			}*/
-			if(scan_queue->getHead() != scan_queue->getTail()){
-				node_item = scan_queue->remove_ref_dax();
-				if(node_item == NULL){
-				    printf("DAX DONE and on agg_barrier now!\n");
-		    		    pthread_barrier_wait(&agg_barrier);
-	    			    scan_queue->printQueue();
-		    	    	    pthread_barrier_wait(&end_barrier);
-				    continue;
-				}
-				item = node_item->value;
-				if(item.getTableId() == 0){
-				    printf("DAX got from table id %d, partition %d - loop: %d in thread %d!\n", item.getTableId(), item.getPart(), loop_id++, this->getId());
-				    Query3::linescan_hw(lineitemComp, item.getPart(), &result, &ctx);
-				    li_cnt++;
-				    this->putFreeNode(node_item);
-				    addNewJob(1, item.getPart(), 11); //add join job -- id = 2
-				}
-				else if(item.getTableId() == 1){
-				    printf("DAX got from table id %d, partition %d - loop: %d in thread %d!\n", item.getTableId(), item.getPart(), loop_id++, this->getId());
-				    Query3::orderscan_hw(ordersComp, item.getPart(), &result, &ctx);
-				    o_cnt++;
-				    this->putFreeNode(node_item);
-			    	    //addNewJob(1, item.getPart(), 3); //(0: hw/sw - 1:sw only, part_id, job type)
-				    //delete node_item;
-				}
-				else if(item.getTableId() == 11){
-				    printf("DAX got a join job for part %d\n", item.getPart());
-				    Query3::join_hw(lineitemComp, ordersComp, item.getPart(), &result, &ctx);
-			            this->putFreeNode(node_item);
-				    addNewJob(1, item.getPart(), 4); //add agg job -- id = 4
-				}
-			}
-			else{
+			if(daxDone){
+			    printf("DAX on agg_barrier now!\n");
+		       	    pthread_barrier_wait(&agg_barrier);
+	    	    	    work_queue->printQueue();
+
+			    printf("DAX on end_barrier now!\n");
+		      	    pthread_barrier_wait(&end_barrier);
+			    printf("DAX releasing...\n");
 			    t_stream->send("", 0);
 			    return NULL;
-		        }
+			}
+			else if(work_queue->getHead() != work_queue->getTail()){
+			    if(items_done == dax_status_t::DAX_EQEMPTY){
+			    	work_queue->printQueue();
+			        node_item = work_queue->remove_ref_dax();
+			        if(node_item == NULL){ //Aggregation job -- DAX is done
+			            daxDone = true;
+				    printf("DAX DONE!\n");
+				    continue;
+		                }
+				else{
+				    postWorkToDAX(node_item->value);
+				    items_done = 0;
+				}
+			    }
+			}
+			//TODO: Check the case where work_queue is empty but there are still elements in dax internal queue
+			else if(items_done == dax_status_t::DAX_EQEMPTY){
+				    printf("DAX DONE!\n");
+				    daxDone = true;
+				    continue;
+			}
+
+			dax_poll_t poll_data[q_size];
+			items_done = dax_poll(dax_queue, poll_data, 1, -1);
+			//items_done = dax_status_t::DAX_EQEMPTY;
+			if(items_done > 0){
+			    handlePollReturn(items_done, poll_data);
+			    items_done = dax_status_t::DAX_EQEMPTY;
+			}
 		}
 		return(0);
+	}
+
+	void postWorkToDAX(Query work_item){
+	    int partId = work_item.getPart();
+	    if(work_item.getTableId() == 0){
+	     	printf("hw_line(%d) pushed to the DAX queue (itr. %d)\n", partId, loop_id++);
+	        Query3::linescan_hw(lineitemComp, partId, &result, &ctx, &dax_queue, true, (void *) node_item); //true == dax_poll
+		li_cnt++;
+	    }
+	    else if(work_item.getTableId() == 1){
+    	    	printf("hw_order(%d) pushed to the DAX queue (itr. %d)\n", partId, loop_id++);
+	        Query3::orderscan_hw(ordersComp, partId, &result, &ctx, &dax_queue, true, (void *) node_item);
+		o_cnt++;
+	    }
+    	    else if(work_item.getTableId() == 11){
+   	    	printf("hw_join(%d) pushed to the DAX queue in (itr. %d)\n", partId, loop_id++);
+	        Query3::join_hw(lineitemComp, ordersComp, partId, &result, &ctx, &dax_queue, true, (void *) node_item);
+	    }
 	}
 
 	Result &getResult(){
@@ -200,24 +212,51 @@ class DaxHandler : public Thread<Query>
 	void addNewJob(int r_id, int p_id, int j_type){
  	    Node<Query> *newNode = this->returnNextNode(r_id, p_id, j_type);
 	    newNode->value.flipDax();
-	//    if(j_type % 11 == 0)
-          //      join_queue->add(newNode);		
- 	    //else
-                scan_queue->add(newNode);		
+            work_queue->add(newNode);		
 	}
 
-	void createDaxContext(){
-	    	//int lFile = open("/tmp/dax_log.txt", O_RDWR);
+	void createDaxContext(dax_queue_t **queue){
+	    	int lFile = open("/tmp/dax_log.txt", O_RDWR);
 
 		dax_status_t res = dax_thread_init(1, 1, 0, NULL, &ctx);
 		if(res != 0)
 			printf("Problem with DAX Context Creation! Return code is %d.\n", res);
-		//res = dax_queue_create(ctx, 5, &queue);
-		//if(res != 0)
-		//	printf("Problem with DAX Queue Creation! Return code is %d.\n", res);
-		//res = dax_set_log_file(ctx, DAX_LOG_ALL, lFile);
-		//if(res != 0)
-		    //printf("Problem with DAX Logger Creation! Return code is %d.\n", res);
+		res = dax_queue_create(ctx, 1, queue);
+		if(res != 0)
+			printf("Problem with DAX Queue Creation! Return code is %d.\n", res);
+		res = dax_set_log_file(ctx, DAX_LOG_ALL, lFile);
+		if(res != 0)
+		    printf("Problem with DAX Logger Creation! Return code is %d.\n", res);
+	}
+
+	void handlePollReturn(int items_done, dax_poll_t *poll_data){
+	    Node<Query> *node_item;
+	    Query item;
+	    int job_id;
+	    int part_id;
+	    int cnt;
+	    for(int i = 0; i < items_done; i++){
+		node_item = (Node<Query> *) poll_data[i].udata;
+	    	this->putFreeNode(node_item);
+		item = node_item->value;
+		job_id = item.getTableId();
+		part_id = item.getPart();
+		cnt = poll_data[i].count;
+		if(job_id == 0){
+		    printf("hw_line(%d) completed (itr. %d) - Count (%d) \n", part_id, loop_id, cnt);
+	    	    addNewJob(1, part_id, 11); //add join job
+    	   	    result.addCountResult(make_tuple(poll_data[i].count, job_id)); 	
+		}
+		else if(job_id == 1){
+		    printf("hw_order(%d) completed (itr. %d) - Count (%d)\n", part_id, loop_id, cnt);
+    	   	    result.addCountResult(make_tuple(poll_data[i].count, job_id)); 	
+		}
+		else{
+		    printf("hw_join(%d) completed (itr. %d) - Count (%d)\n", part_id, loop_id, cnt);
+		    //addNewJob(1, part_id, 4); //add agg job
+    	   	    result.addCountResult(make_tuple(poll_data[i].count, 2)); 	
+		}
+	    }
 	}
 };
 #endif
@@ -229,20 +268,19 @@ class ProcessingUnit{
 	#endif
 	int num_of_units;
 	WorkQueue<Query> job_queue;     
-	WorkQueue<Query> join_queue;     
 
 	public: 
- 	    ProcessingUnit(int num_of_threads, WorkQueue<Query> queue, WorkQueue<Query> j_queue) : num_of_units(num_of_threads), job_queue(queue), join_queue(j_queue){}
+ 	    ProcessingUnit(int num_of_threads, WorkQueue<Query> queue) : num_of_units(num_of_threads), job_queue(queue){}
 
 	void createProcessingUnit(){
 	    conn_handlers.reserve(50);
 	    for(int i = 0; i < num_of_units; i++){
-		CoreHandler *handler = new CoreHandler(&job_queue, &join_queue);
+		CoreHandler *handler = new CoreHandler(&job_queue);
 		handler->setId(i);
 		conn_handlers.push_back(handler);	
 	    }
-	    #ifdef __sun 
-	    dax_handler = new DaxHandler(&job_queue, &join_queue);
+	    #ifdef __sun
+	    dax_handler = new DaxHandler(&job_queue);
 	    dax_handler->setId(num_of_units);
 	    #endif
 	}
@@ -277,10 +315,6 @@ class ProcessingUnit{
 
 	WorkQueue<Query> &getJobQueue(){
 	    return job_queue;
-	}
-
-	WorkQueue<Query> &getJoinQueue(){
-	    return join_queue;
 	}
 
 	void writeResults(){
@@ -334,12 +368,11 @@ class ProcessingUnit{
 	        delete curHandler; 
             }
 	    #ifdef __sun 
+	    //dax_queue_destroy(dax_queue);
 	    delete dax_handler;
 	    #endif
 	    Node<Query> *head = job_queue.getHead();
 	    delete head;
-	    Node<Query> *j_head = join_queue.getHead();
-	    delete j_head;
 	}	
 };
 
@@ -362,9 +395,10 @@ int main(int argc, char** argv)
 
 	printf("Reading from %s and %s\n", fileName.c_str(), fileName2.c_str());
 	
-	pthread_barrier_init(&barrier, NULL, workers + 1); 
-	pthread_barrier_init(&agg_barrier, NULL, workers + 1); 
-	pthread_barrier_init(&end_barrier, NULL, workers + 1); 
+	int num_of_barriers = workers + 1;
+	pthread_barrier_init(&barrier, NULL, num_of_barriers); 
+	pthread_barrier_init(&agg_barrier, NULL, num_of_barriers); 
+	pthread_barrier_init(&end_barrier, NULL, num_of_barriers); 
 
 	/*Lineitem table*/
 	Partitioner line_part;
@@ -392,15 +426,14 @@ int main(int argc, char** argv)
 	std::vector<ProcessingUnit> proc_units;
     	proc_units.reserve(10);
 	
-	WorkQueue<Query> scan_queue(0, &data_loader); 
-	WorkQueue<Query> join_queue(1); 
+	WorkQueue<Query> work_queue(0, &data_loader); 
         for(int i = 0; i < 1; i++){
-	    ProcessingUnit proc_unit (workers, scan_queue, join_queue);
+	    ProcessingUnit proc_unit (workers, work_queue);
 	    proc_unit.createProcessingUnit();
 	    proc_unit.addWork(line_part.getNumberOfParts(), 0);
 	    proc_unit.addWork(order_part.getNumberOfParts(), 1);
 	    proc_units.push_back(proc_unit);
-	    scan_queue.printQueue();
+	    work_queue.printQueue();
         }
 
         int numberOfConnections = 1;

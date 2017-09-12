@@ -20,9 +20,9 @@ class Query3 {
         ~Query3();
 
 	#ifdef __sun 
-	static void linescan_hw(DataCompressor *dataComp, int curPart, Result *result, dax_context_t **ctx);
-	static void orderscan_hw(DataCompressor *dataComp, int curPart, Result *result, dax_context_t **ctx);
-	static void join_hw(DataCompressor *lineitemComp, DataCompressor *ordersComp, int curPart, Result *result, dax_context_t **ctx);
+	static void linescan_hw(DataCompressor *dataComp, int curPart, Result *result, dax_context_t **ctx, dax_queue_t **queue, bool async, void *udata);
+	static void orderscan_hw(DataCompressor *dataComp, int curPart, Result *result, dax_context_t **ctx, dax_queue_t **queue, bool async, void *udata);
+	static void join_hw(DataCompressor *lineitemComp, DataCompressor *ordersComp, int curPart, Result *result, dax_context_t **ctx, dax_queue_t **queue, bool async, void *udata);
 	#endif
 
 	static void linescan_sw(DataCompressor *dataComp, int curPart, Result *result); 

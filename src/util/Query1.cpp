@@ -1,4 +1,3 @@
-
 #include "Query.h"
 #include "Query1.h"
 #include "../log/Result.h"

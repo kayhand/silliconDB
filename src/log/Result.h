@@ -123,6 +123,12 @@ class Result {
 	}
 
 	template <typename T> 
+	void addCountResultDax(T tuple){
+   	    count_result.push_back(tuple);
+	    printf("Dax counted: %d - size: %d\n", (int) get<0>(tuple), (int) count_result.size());
+	}
+
+	template <typename T> 
 	void addJoinResult(T tuple){
    	    join_result.push_back(tuple);
 	}

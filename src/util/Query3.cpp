@@ -10,7 +10,7 @@ Query3::Query3(){}
 Query3::~Query3(){}
 
 #ifdef __sun 
-void Query3::linescan_hw(DataCompressor *dataComp, int scaledPart, Result *result, dax_context_t **ctx)
+void Query3::linescan_hw(DataCompressor *dataComp, int scaledPart, Result *result, dax_context_t **ctx, dax_queue_t **queue, bool async, void *udata)
 { 
     table *compTable = dataComp->getTable();
     int num_of_parts = dataComp->getNumOfParts();
@@ -58,18 +58,25 @@ void Query3::linescan_hw(DataCompressor *dataComp, int scaledPart, Result *resul
 
     hrtime_t t_start, t_end;
     t_start = gethrtime();
-    dax_result_t scan_res = dax_scan_value(*ctx, 0, &src, &dst, DAX_GT, &predicate);
+    if(!async){
+    	dax_result_t scan_res = dax_scan_value(*ctx, 0, &src, &dst, DAX_GT, &predicate);
+    	if(scan_res.status != 0)
+            printf("Dax Error! %d\n", scan_res.status);
+    	result->addCountResultDax(make_tuple(scan_res.count, 0));
+    }
+    else{
+    	dax_status_t scan_status = dax_scan_value_post(*queue, 0, &src, &dst, DAX_GT, &predicate, udata);
+    	if(scan_status != 0)
+            printf("Dax Error! %d\n", scan_status);
+    }
     t_end = gethrtime();
-    if(scan_res.status != 0)
-        printf("Dax Error! %d\n", scan_res.status);
-    //printf("DAX Count: %lu\n", scan_res.count);
     result->addRuntime(DAX_SCAN, make_tuple(t_start, t_end));
-    result->addCountResult(make_tuple(scan_res.count, 0)); 
 } 
 #endif
 
 #ifdef __sun 
-void Query3::orderscan_hw(DataCompressor *dataComp, int curPart, Result *result, dax_context_t **ctx)
+void Query3::orderscan_hw(DataCompressor *dataComp, int curPart, Result *result, dax_context_t **ctx, dax_queue_t **queue, bool async, void *udata)
+
 { 
     table *compTable = dataComp->getTable();
     uint64_t comp_predicate = 0;
@@ -114,14 +121,21 @@ void Query3::orderscan_hw(DataCompressor *dataComp, int curPart, Result *result,
 
     hrtime_t t_start, t_end;
     t_start = gethrtime();
-    dax_result_t scan_res = dax_scan_value(*ctx, 0, &src, &dst, DAX_LE, &predicate);
-    t_end = gethrtime();
-    if(scan_res.status != 0)
-        printf("Dax Error! %d\n", scan_res.status);
-    //printf("DAX Count: %lu\n", scan_res.count);
+    if(!async){
+    	dax_result_t scan_res = dax_scan_value(*ctx, 0, &src, &dst, DAX_LE, &predicate);
+    	if(scan_res.status != 0)
+            printf("Dax Error! %d\n", scan_res.status);
+    	result->addCountResult(make_tuple(scan_res.count, 1)); 
+    	printf("DAX Count: %lu - %d\n", scan_res.count, (int) dst.elements);
+    }
+    else{
+    	dax_status_t scan_status = dax_scan_value_post(*queue, 0, &src, &dst, DAX_LE, &predicate, udata);
+    	if(scan_status != 0)
+            printf("Dax Error! %d\n", scan_status);
+    }
 
+    t_end = gethrtime();
     result->addRuntime(DAX_SCAN, make_tuple(t_start, t_end));
-    result->addCountResult(make_tuple(scan_res.count, 1));
 } 
 #endif
 
@@ -243,7 +257,7 @@ void Query3::linescan_simd(DataCompressor *dataComp, int scaledPart, Result *res
     t_end = gethrtime();
     result->addRuntime(SW_SCAN, make_tuple(t_start, t_end));
     result->addCountResult(make_tuple(count, 0));
-    printf("SW Count(%d): %d\n", curPart, count);
+    //printf("SW Count(%d): %d\n", curPart, count);
 }
 
 void Query3::orderscan_sw(DataCompressor *dataComp, int curPart, Result *result)
@@ -377,7 +391,7 @@ void Query3::orderscan_simd(DataCompressor *dataComp, int curPart, Result *resul
 }
 
 #ifdef __sun 
-void Query3::join_hw(DataCompressor *lineitemComp, DataCompressor *ordersComp, int curPart, Result *result, dax_context_t **ctx){ 
+void Query3::join_hw(DataCompressor *lineitemComp, DataCompressor *ordersComp, int curPart, Result *result, dax_context_t **ctx, dax_queue_t **queue, bool async, void *udata){ 
     table *lineTable = lineitemComp->getTable();
     table *ordersTable = ordersComp->getTable();
 
@@ -427,20 +441,21 @@ void Query3::join_hw(DataCompressor *lineitemComp, DataCompressor *ordersComp, i
     // src -- l_orderkey column from lineitem table
     // bit_map -- global bit vector result coming from the orders scan
 
-    printf("DAX join starts...\n");
     hrtime_t t_start, t_end;
     t_start = gethrtime();
-    dax_result_t join_res = dax_translate(*ctx, DAX_CACHE_DST, &src, &dst, &bit_map, elem_bits);
-    t_end = gethrtime();
-    printf("DAX join ends...\n");
-    if(join_res.status != 0){
-    	printf("DAX Error! %d\n", join_res.status);
+    if(!async){
+    	dax_result_t join_res = dax_translate(*ctx, DAX_CACHE_DST, &src, &dst, &bit_map, elem_bits);
+    	if(join_res.status != 0)
+            printf("Dax Error! %d\n", join_res.status);
+    	result->addCountResult(make_tuple(join_res.count, 2)); 
     }
-    //printf("Count: %lu:%d\n", join_res.count, remainder);
-    printf("Count: %lu\n", join_res.count);
-
+    else{
+    	dax_status_t join_status = dax_translate_post(*queue, 0, &src, &dst, &bit_map, elem_bits, udata);
+    	if(join_status != 0)
+            printf("Dax Join Error! %d for part %d\n", join_status, curPart);
+    }
+    t_end = gethrtime();
     result->addRuntime(JOIN, make_tuple(t_start, t_end));
-    result->addCountResult(make_tuple(join_res.count, 2));
 } 
 #endif
 
@@ -483,7 +498,7 @@ void Query3::join_sw(DataCompressor *lineitemComp, DataCompressor *ordersComp, i
     for(int i = 0; i < num_of_segments; i++){
         count += __builtin_popcountl(join_vector[i]);
     }
-    printf("Join count:%d\n", count);
+    printf("Join count:%d\n\n", count);
     result->addRuntime(JOIN, make_tuple(t_start, t_end));
     result->addCountResult(make_tuple(count, 2));
 

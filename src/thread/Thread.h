@@ -15,6 +15,7 @@
 	Java style thread package on top of p_threads
 */
 
+
 template <class T> 
 struct Node{
     T value;
@@ -133,7 +134,7 @@ class Thread
 	 flags = PA_QUERY;
 	 id_t read_ids[1];
          result = processor_affinity(&ps, &nids, read_ids, &flags);
-         printf("Affinity set to core number %d\n", read_ids[0]);
+         //printf("Affinity set to core number %d\n", read_ids[0]);
 	 return result;
     #endif 
         return cpuid;
@@ -189,7 +190,6 @@ class Thread
 	    return curNode;
 	}
     }
-
 };
 
 #endif
