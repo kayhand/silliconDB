@@ -2,7 +2,6 @@
 #define __dataloader_h__
 
 #include "DataCompressor.h"
-#include "../util/Partitioner.h"
 
 class DataLoader{
 
@@ -24,8 +23,8 @@ class DataLoader{
     }
 
     void parseTable(int t_id){
- 	 dataCompressors[t_id]->createTable();
- 	 dataCompressors[t_id]->parse();
+ 	 dataCompressors[t_id]->createTableMeta();
+ 	 dataCompressors[t_id]->parseData();
     }
 
     void compressTable(int t_id){

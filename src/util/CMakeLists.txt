@@ -1,13 +1,6 @@
-set(UTIL_SRC
-    Partitioner.h
-    Partitioner.cpp
-    Query1.h
-    Query1.cpp
-    Query3.h
-    Query3.cpp
+set(UTIL_H
+    Helper.h
+    Query.h
 )
 
-link_directories(/opt/dax)
-include_directories(/opt/dax)
-
-add_library(util_src ${UTIL_SRC})
+add_library(util_src ${UTIL_H})

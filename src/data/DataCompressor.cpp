@@ -2,72 +2,107 @@
 using namespace std;
 
 DataCompressor::DataCompressor(string filename, int t_id, Partitioner &partitioner, int sf){
-    this->path = filename;
-    this->t_id = t_id;
+    table_meta *t_meta = &(this->t.t_meta);
+    t_meta->path = filename;
+    t_meta->t_id = t_id;
+    t_meta->num_of_parts = partitioner.getMap().size();
+
     this->partitioner = &partitioner;
-    this->num_of_parts = partitioner.getMap().size();
     this->scale_factor = sf;
 }
 
 DataCompressor::~DataCompressor(){
-    for(int i=0; i < t.nb_columns * num_of_parts; i++){
-        switch(t.columns[i].data_type){
-            case column::data_type_t::INT:
+    cleanUp();
+
+    for(int i = 0; i < t.t_meta.num_of_columns; i++){
+        switch(t.columns[i].c_meta.data_type){
+            case data_type_t::INT:
+		delete[] t.columns[i].encoder.i_dict;
+		break;
+            case data_type_t::STRING:
+		t.columns[i].encoder.dict.clear();
+		break;
+            case data_type_t::DOUBLE:
+		delete[] t.columns[i].encoder.d_dict;
+		break;
+     	}
+    }
+
+    int all_parts = t.t_meta.num_of_columns * t.t_meta.num_of_parts;
+    for(int i = 0; i < all_parts; i++){
+        switch(t.columns[i].c_meta.data_type){
+            case data_type_t::INT:
 		t.columns[i].i_keys.clear();
 		t.columns[i].i_pairs.clear();
-		delete[] t.columns[i].i_dict;
                 break;
-            case column::data_type_t::STRING:
+            case data_type_t::STRING:
 		t.columns[i].keys.clear();
 		t.columns[i].str_pairs.clear();
-		t.columns[i].dict.clear();
                 break;
-            case column::data_type_t::DOUBLE:
+            case data_type_t::DOUBLE:
 		t.columns[i].d_keys.clear();
 		t.columns[i].d_pairs.clear();
-		delete[] t.columns[i].d_dict;
                 break;
 	}
 	delete[] t.columns[i].data;
 	delete[] t.columns[i].compressed;
     }
     delete[] t.columns;
-    t.keyMap.clear();
+    t.t_meta.keyMap.clear();
     delete[] distinct_keys;
     free(bit_vector);
     free(join_vector);
 }
 
-void DataCompressor::createTable(){
-    t.nb_columns = partitioner->getNumOfAtts();
-    t.nb_lines = partitioner->getNumOfElements();
-    t.columns = new column [t.nb_columns * num_of_parts];
-    vector<string> schema = partitioner->getSchema();
-    printf("Cols: %d, Els %d, Psize: %d\n", t.nb_columns, t.nb_lines, num_of_parts);
+void DataCompressor::cleanUp(){
 
-    for(int curCol = 0; curCol < t.nb_columns * num_of_parts; curCol++){
-	int actual_id = curCol % t.nb_columns;
-	int part_id = curCol / t.nb_columns;
-
-        if(!schema[actual_id].find("INT")){        
-            t.columns[curCol].data_type = column::data_type_t::INT;
-	}
-        else if(!schema[actual_id].find("DOUBLE")){        
-            t.columns[curCol].data_type = column::data_type_t::DOUBLE;
-	}
-	else{
-            t.columns[curCol].data_type = column::data_type_t::STRING;
-	}
-
-	t.columns[curCol].start = partitioner->getMap().at(part_id).first;
-	t.columns[curCol].end = partitioner->getMap().at(part_id).second;
-	t.columns[curCol].column_id = curCol;
-    }
-    distinct_keys = new int[t.nb_columns]();
-    schema.clear();
 }
 
-void DataCompressor::parse(){
+void DataCompressor::initTable(){
+    table_meta *t_meta = &(t.t_meta);
+    t_meta->num_of_columns = partitioner->getNumOfAtts();
+    t_meta->num_of_lines = partitioner->getNumOfElements();
+
+    int all_parts = t_meta->num_of_columns * t_meta->num_of_parts;
+    t.columns = new column[all_parts];
+
+    printf("Cols: %d, Els %d, Psize: %d\n", t_meta->num_of_columns, t_meta->num_of_lines, t_meta->num_of_parts);    
+}
+
+void DataCompressor::createTableMeta(){
+    initTable();
+
+    table_meta *t_meta = &(t.t_meta);
+    int all_parts = t_meta->num_of_columns * t_meta->num_of_parts;
+    vector<string> *schema = partitioner->getSchema();
+
+    for(int curCol = 0; curCol < all_parts; curCol++){
+	int actual_id = curCol % t_meta->num_of_columns;
+	int part_id = curCol / t_meta->num_of_columns;
+
+	column_meta *c_meta = &(t.columns[curCol].c_meta);
+
+        if(!schema->at(actual_id).find("INT")){        
+            c_meta->data_type = data_type_t::INT;
+	}
+        else if(!schema->at(actual_id).find("DOUBLE")){        
+            c_meta->data_type = data_type_t::DOUBLE;
+	}
+	else{
+            c_meta->data_type = data_type_t::STRING;
+	}
+
+	c_meta->start = partitioner->getMap().at(part_id).first;
+	c_meta->end = partitioner->getMap().at(part_id).second;
+	c_meta->col_size = c_meta->end - c_meta->start + 1;
+
+	c_meta->column_id = curCol;
+    }
+    distinct_keys = new int[t_meta->num_of_columns]();
+    schema->clear();
+}
+
+void DataCompressor::parseData(){
     printf("Parsing the file...\n");
     ifstream file;
     string  buff;
@@ -76,19 +111,23 @@ void DataCompressor::parse(){
     float d_value;
     vector<string> exploded;
     column *cur_col;
+    column_meta *c_meta;
 
-    file.open(path);
+    file.open(t.t_meta.path);
     getline(file, buff);
     while(getline(file, buff)){
         exploded = explode(buff, DELIMITER);
-        for(int col = 0; col < t.nb_columns * num_of_parts; col++){	   
-	    int actual_col = col % t.nb_columns;
-	    if(t.columns[col].start > line || line > t.columns[col].end){
+        for(int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts; col++){	   
+	    int actual_col = col % t.t_meta.num_of_columns;
+	    cur_col = &(t.columns[col]);
+	    c_meta = &(cur_col->c_meta);
+
+	    if(line < c_meta->start || line > c_meta->end){
 		continue;
 	    } 
-	    cur_col = &(t.columns[col]);
-	    switch(t.columns[col].data_type){
-		case column::data_type_t::INT:
+
+	    switch(c_meta->data_type){
+		case data_type_t::INT:
 		    value = atoi(exploded[actual_col].c_str());
 		    cur_col->i_pairs.push_back(make_pair(value, line));
 		    if(t.columns[actual_col].i_keys.find(value) == t.columns[actual_col].i_keys.end()){
@@ -96,7 +135,7 @@ void DataCompressor::parse(){
 			distinct_keys[actual_col] += 1;
 		    }
 		    break;
-		case column::data_type_t::DOUBLE:
+		case data_type_t::DOUBLE:
 		    d_value = atof(exploded[actual_col].c_str());
 		    cur_col->d_pairs.push_back(make_pair(d_value, line));
 		    if(t.columns[actual_col].d_keys.find(d_value) == t.columns[actual_col].d_keys.end()){
@@ -104,7 +143,7 @@ void DataCompressor::parse(){
 			distinct_keys[actual_col] += 1;
 		    }
 		    break;
-		case column::data_type_t::STRING:
+		case data_type_t::STRING:
 		    cur_col->str_pairs.push_back(make_pair(exploded[actual_col], line));
 		    if(t.columns[actual_col].keys.find(exploded[actual_col]) == t.columns[actual_col].keys.end()){
 			t.columns[actual_col].keys[exploded[actual_col]] = line;
@@ -118,50 +157,66 @@ void DataCompressor::parse(){
     }
     file.close();
 
-    //Give keys indices in the increasing order
-    for(int col = 0; col < t.nb_columns; col++){
-	    int index = 0;
-	    if(t.columns[col].i_keys.size() > 0)
-	    	t.columns[col].i_dict = new int[distinct_keys[col]];
-	    else if(t.columns[col].d_keys.size() > 0)
-	    	t.columns[col].d_dict = new double[distinct_keys[col]];
-	    for(auto curPair : t.columns[col].i_keys){
-		t.columns[col].i_keys[curPair.first] = index;
-		t.columns[col].i_dict[index] = curPair.first;
-		index++;
-	    }
+    createDictionaries();
+    calculateBitSizes();
 
-	    for(auto curPair : t.columns[col].d_keys){
-		t.columns[col].d_keys[curPair.first] = index;
-		t.columns[col].d_dict[index] = curPair.first;
-		index++;
-	    }
+    createEncoders();
 
-	    for(auto curPair : t.columns[col].keys){
-		t.columns[col].keys[curPair.first] = index;
-		t.columns[col].dict[index] = curPair.first;
-		index++;
-	    }	
+    table_meta *t_meta = &(t.t_meta);
+
+    t_meta->num_of_segments = (t_meta->num_of_parts) * partitioner->getSegsPerPart();
+    //t.num_of_segments += ceil((partitioner->getPartitionSize(this->num_of_parts - 1)) / 64.0);
+
+    posix_memalign(&bit_vector, 4096, t_meta->num_of_segments * 8);
+    posix_memalign(&join_vector, 4096, t_meta->num_of_segments * 8);
+
+    //Create key map for efficient aggregation
+    //Q1 has col[8] and col[9] as keys
+    if(t_meta->t_id == 0){ //for lineitem table
+	    uint32_t curKey;
+	    auto it1 = t.columns[8].keys.begin();
+	    auto it2 = t.columns[9].keys.begin();
+	    while(it1 != t.columns[8].keys.end()){
+		curKey = it1->second;
+		curKey = (curKey << 16) | it2->second;
+
+		if(t_meta->keyMap.find(curKey) == t_meta->keyMap.end())
+		    t_meta->keyMap.emplace(curKey, t_meta->keyMap.size());
+		it1++;
+		it2++;
+	    }
+	    uint32_t final_key = 65536; 
+	    t_meta->keyMap.emplace(final_key, t_meta->keyMap.size());
+
+	    for(auto &curr : t_meta->keyMap)
+		t_meta->reversedMap.emplace(curr.second, curr.first);
     }
+}
 
-    getNumberOfBits();
-    for(int col = 0; col < t.nb_columns * num_of_parts; col++){
-	int actual_col = col % t.nb_columns;
-	int part_id = col / t.nb_columns;
+void DataCompressor::createEncoders(){
+    column *cur_col;
+    column_meta *c_meta;
+
+    for(int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts; col++){
+	int actual_col = col % t.t_meta.num_of_columns;
+	int part_id = col / t.t_meta.num_of_columns;
         cur_col = &(t.columns[col]);
-	if(col >= t.nb_columns){
-	    t.columns[col].i_dict = t.columns[actual_col].i_dict; 
-	    t.columns[col].d_dict = t.columns[actual_col].d_dict; 
+        c_meta = &(cur_col->c_meta);
+	if(col >= t.t_meta.num_of_columns){
+	    cur_col->encoder.i_dict = t.columns[actual_col].encoder.i_dict; 
+	    cur_col->encoder.d_dict = t.columns[actual_col].encoder.d_dict; 
 	}
 
-        int n_bits = cur_col->num_of_bits;
-	int curPartSize = getPartSize(part_id); //How many data elements in the current part
+        int n_bits = cur_col->encoder.num_of_bits;
+	//int curPartSize = getPartSize(part_id); //How many data elements in the current part
+	int curPartSize = c_meta->col_size;
 
-        cur_col->num_of_codes = WORD_SIZE / (n_bits + 1);
-        cur_col->codes_per_segment = cur_col->num_of_codes * (n_bits + 1);
-	cur_col->num_of_segments = partitioner->getSegsPerPart();
-	if(part_id == num_of_parts - 1)
-            cur_col->num_of_segments = ceil((partitioner->getPartitionSize(part_id)) / 64.0);
+        c_meta->num_of_codes = WORD_SIZE / (n_bits + 1);
+        c_meta->codes_per_segment = c_meta->num_of_codes * (n_bits + 1);
+	c_meta->num_of_segments = partitioner->getSegsPerPart();
+
+	if(part_id == t.t_meta.num_of_parts - 1)
+            c_meta->num_of_segments = ceil((partitioner->getPartitionSize(part_id)) / 64.0);
 
         cur_col->data = new uint32_t[curPartSize];
 	int curInd = 0;
@@ -176,33 +231,32 @@ void DataCompressor::parse(){
 		cur_col->data[curInd++] = t.columns[actual_col].keys[curPair.first];
 	}
     }
+}
 
-    t.num_of_segments = (this->num_of_parts) * partitioner->getSegsPerPart();
-    //t.num_of_segments += ceil((partitioner->getPartitionSize(this->num_of_parts - 1)) / 64.0);
-
-    posix_memalign(&bit_vector, 4096, t.num_of_segments * 8);
-    posix_memalign(&join_vector, 4096, t.num_of_segments * 8);
-
-    //Create key map for efficient aggregation
-    //Q1 has col[8] and col[9] as keys
-    if(this->t_id == 0){ //for lineitem table
-	    uint32_t curKey;
-	    auto it1 = t.columns[8].keys.begin();
-	    auto it2 = t.columns[9].keys.begin();
-	    while(it1 != t.columns[8].keys.end()){
-		curKey = it1->second;
-		curKey = (curKey << 16) | it2->second;
-
-		if(t.keyMap.find(curKey) == t.keyMap.end())
-		    t.keyMap.emplace(curKey, t.keyMap.size());
-		it1++;
-		it2++;
+void DataCompressor::createDictionaries(){
+    for(int col = 0; col < t.t_meta.num_of_columns; col++){
+	    int index = 0;
+	    if(t.columns[col].i_keys.size() > 0)
+	    	t.columns[col].encoder.i_dict = new int[distinct_keys[col]];
+	    else if(t.columns[col].d_keys.size() > 0)
+	    	t.columns[col].encoder.d_dict = new double[distinct_keys[col]];
+	    for(auto curPair : t.columns[col].i_keys){
+		t.columns[col].i_keys[curPair.first] = index;
+		t.columns[col].encoder.i_dict[index] = curPair.first;
+		index++;
 	    }
-	    uint32_t final_key = 65536; 
-	    t.keyMap.emplace(final_key, t.keyMap.size());
 
-	    for(auto &curr : t.keyMap)
-		t.reversedMap.emplace(curr.second, curr.first);
+	    for(auto curPair : t.columns[col].d_keys){
+		t.columns[col].d_keys[curPair.first] = index;
+		t.columns[col].encoder.d_dict[index] = curPair.first;
+		index++;
+	    }
+
+	    for(auto curPair : t.columns[col].keys){
+		t.columns[col].keys[curPair.first] = index;
+		t.columns[col].encoder.dict[index] = curPair.first;
+		index++;
+	    }	
     }
 }
 
@@ -212,29 +266,31 @@ void DataCompressor::bw_compression(column &c){
     uint64_t newVal;
     uint64_t curVal;
     int rowId = 0;
-    int rows = c.num_of_bits + 1;
+    int rows = c.encoder.num_of_bits + 1;
+
+    column_meta *c_meta = &(c.c_meta);
 
     int shift_amount = 0;
-    int num_of_els = c.end - c.start + 1;
-    int curInd;
+    int num_of_els = c_meta->end - c_meta->start + 1;
+    int curInd = -1;
 
     for(int i = 0 ; i < num_of_els; i++){	    
 	newVal = c.data[i];
-        curSegment = values_written / c.codes_per_segment;
-        if(curSegment >= c.num_of_segments)
+        curSegment = values_written / c_meta->codes_per_segment;
+        if(curSegment >= c_meta->num_of_segments)
                 break;
         if(curSegment != prevSegment){
                 codes_written = 0;
                 rowId = 0;
         }
-        rowId = codes_written % (c.num_of_bits + 1);
-	shift_amount = (codes_written / (c.num_of_bits + 1)) * (c.num_of_bits + 1);
+        rowId = codes_written % (c.encoder.num_of_bits + 1);
+	shift_amount = (codes_written / (c.encoder.num_of_bits + 1)) * (c.encoder.num_of_bits + 1);
 
-	newVal <<= (WORD_SIZE - (c.num_of_bits + 1));
+	newVal <<= (WORD_SIZE - (c.encoder.num_of_bits + 1));
 	newVal >>= shift_amount;
 
 	curInd = curSegment * rows + rowId;
-        if(codes_written < (c.num_of_bits + 1)){
+        if(codes_written < (c.encoder.num_of_bits + 1)){
 	    c.compressed[curInd] = 0;
 	    c.compressed[curInd] = newVal;
         }
@@ -249,10 +305,10 @@ void DataCompressor::bw_compression(column &c){
 	    //printf("Ind:%d Line val: %lu\n", curInd, c.compressed[curInd]);
     }
 
-    int n_bits = c.num_of_bits + 1;
-    int codes_per_line = c.codes_per_segment / n_bits;
+    int n_bits = c.encoder.num_of_bits + 1;
+    int codes_per_line = c_meta->codes_per_segment / n_bits;
     int newIndex;
-    for(int i = 0; i < c.codes_per_segment; i++){
+    for(int i = 0; i < c_meta->codes_per_segment; i++){
     	newIndex = (i / codes_per_line) + n_bits * (i % codes_per_line);
 	c.index_mapping[i] = newIndex;
     }
@@ -264,7 +320,7 @@ void DataCompressor::bw_compression(column &c){
         printf("Segment %d: \n", i);
         for(int j = 0; j < c.num_of_bits; j++){
             printf("%lu\n", c.compressed[i * rows + j]);
-        }
+        , segs: %d}
     }   
 
     for(auto &cur : c.keys){
@@ -280,9 +336,10 @@ void DataCompressor::bit_compression(column &c){
 
     int bits_remaining = 64;
 
-    int num_of_bits = c.num_of_bits + 1;
-    int num_of_els = c.end - c.start + 1;
-    for(int i = 0; i < num_of_els; i++){	    
+    column_meta *c_meta = &(c.c_meta);
+    int num_of_bits = c.encoder.num_of_bits + 1;
+    int i;
+    for(i = 0; i < c_meta->col_size; i++){	    
 	    newVal = c.data[i];
 	    if(bits_remaining < 0){
 		c.compressed[curIndex] = writtenVal;
@@ -306,15 +363,16 @@ void DataCompressor::bit_compression(column &c){
     c.compressed[curIndex] = writtenVal;
 }
 
-void DataCompressor::getNumberOfBits(){
+void DataCompressor::calculateBitSizes(){
     int n_bits = 0;
     int actual_col = 0;
     int count = 0;
     int round = 0;
-    for(int col = 0; col < t.nb_columns * num_of_parts; col++){
-        if(t.columns[col].num_of_bits != -1)
+
+    for(int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts; col++){
+        if(t.columns[col].encoder.num_of_bits != -1)
             continue;
-	actual_col = col % t.nb_columns;
+	actual_col = col % t.t_meta.num_of_columns;
 	count = distinct_keys[actual_col];
 	if(count == 1)
 	    n_bits = 1;
@@ -327,7 +385,7 @@ void DataCompressor::getNumberOfBits(){
 	}
 	if(n_bits >= 15)
 	    n_bits = 23;
-        t.columns[col].num_of_bits = n_bits;
+        t.columns[col].encoder.num_of_bits = n_bits;
 	//printf("%d->%d\n", col, t.columns[col].num_of_bits);
 	//if(n_bits > 23)
             //t.columns[col].num_of_bits = 23;
@@ -337,12 +395,13 @@ void DataCompressor::getNumberOfBits(){
 
 void DataCompressor::compress(){
     column *cur_col;
-    for(int col = 0; col < t.nb_columns * num_of_parts; col++){
+    for(int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts; col++){
         cur_col = &(t.columns[col]);
 
-	int part_id = col / t.nb_columns;
-	int compLines = getCompLines(part_id); // gets segment size for that partition
-        cur_col->compressed = new uint64_t[compLines * (cur_col->num_of_bits + 1)]();
+	int num_of_segments = cur_col->c_meta.num_of_segments;
+	//int compLines = getCompLines(part_id); // gets segment size for that partition
+	int c_size = num_of_segments * (cur_col->encoder.num_of_bits + 1);
+        cur_col->compressed = new uint64_t[c_size]();
         bit_compression(*cur_col);
         //bw_compression(*cur_col);
     }

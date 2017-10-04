@@ -10,10 +10,11 @@ class Helper {
         ~Helper(){}
 
 	static std::vector<int> createIndexArray(uint64_t *bitVector, column *c, bool isDax){
+	    column_meta *c_meta = &(c->c_meta);
 	    std::vector<int> indArray;
 	    int index;
-	    int remaining_data = c->end - c->start + 1;
-	    for(int i = 0; i < c->num_of_segments; i++){
+	    int remaining_data = c_meta->end - c_meta->start + 1;
+	    for(int i = 0; i < c_meta->num_of_segments; i++){
 	    	int cur_bit = 63;
 	        uint64_t vec = bitVector[i];
 		std::bitset<64> bit_vec(vec);
@@ -34,9 +35,10 @@ class Helper {
 	}	
 
 	static void translateDaxVector(uint64_t *bitVector, column *c){
+	    column_meta *c_meta = &(c->c_meta);
+	    int remaining_data = c_meta->end - c_meta->start + 1;
 	    int index;
-	    int remaining_data = c->end - c->start + 1;
-	    for(int i = 0; i < c->num_of_segments; i++){
+	    for(int i = 0; i < c_meta->num_of_segments; i++){
 	    	int cur_bit = 63;
 	        uint64_t vec = bitVector[i];
 		std::bitset<64> bit_vec(vec);

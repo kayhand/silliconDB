@@ -21,8 +21,10 @@ void Partitioner::roundRobin(std::string path, int part_size)
 
     int segs_per_part = part_size / 64.0;
     this->segs_per_part = ceil((double) segs_per_part / 64) * 64;
+
     int els_per_part = this->segs_per_part * 64;
     this->num_of_parts = num_of_els / els_per_part;
+
     int remainder = num_of_els - this->num_of_parts * els_per_part;
 
     printf("Number of elements: %d\n", num_of_els);

@@ -11,11 +11,6 @@
 #include <thread.h>
 #endif
 
-/*
-	Java style thread package on top of p_threads
-*/
-
-
 template <class T> 
 struct Node{
     T value;
@@ -28,6 +23,9 @@ struct Node{
     Node(const Node &source){
     	next.store(source.next.load());
     }
+
+    hrtime_t t_start;
+    hrtime_t t_end;
 };
 
 template <class T>
@@ -54,7 +52,7 @@ class Thread
 	}
     }
 
-    int start(int cpuid)
+    int start(int cpuid, bool daxHandler)
     {
 	pthread_attr_t attr;
     	pthread_attr_init(&attr);
@@ -62,9 +60,14 @@ class Thread
 	node_pool.reserve(10);
 
 	int result = pthread_create(&tid, &attr, runThread, this);
-    	if (result == 0) {
-        	running = cpuid;
-    		setAffinity(cpuid);
+    	if (result == 0){
+        	running = 1;
+		if(daxHandler){
+    		    setAffinity(cpuid);
+		}
+		else
+    		    setAffinity(cpuid);
+    		    //setAffinity(cpuid * 8);
     	}
     	return result;
     }
@@ -125,17 +128,17 @@ class Thread
 	uint32_t flags = PA_TYPE_CPU | PA_AFF_STRONG;
 	setprocset(&ps, POP_AND, P_PID, P_MYID, P_LWPID, thr_self());
 
-         result = processor_affinity(&ps, &nids, ids, &flags);
-	 if(result != 0){
-	     fprintf(stderr, "Error setting affinity.\n");
-	     perror(NULL);
-	 }
+        result = processor_affinity(&ps, &nids, ids, &flags);
+	if(result != 0){
+	    fprintf(stderr, "Error setting affinity.\n");
+	    perror(NULL);
+	}
 
-	 flags = PA_QUERY;
-	 id_t read_ids[1];
-         result = processor_affinity(&ps, &nids, read_ids, &flags);
-         //printf("Affinity set to core number %d\n", read_ids[0]);
-	 return result;
+	flags = PA_QUERY;
+	id_t read_ids[1];
+        result = processor_affinity(&ps, &nids, read_ids, &flags);
+        //printf("Affinity set to core number %d\n", read_ids[0]);
+	return result;
     #endif 
         return cpuid;
     }
@@ -161,7 +164,6 @@ class Thread
     	//node->next = NULL;
 	node_pool.push_back(node);
     }
-
 
     Node<T>* returnNextNode(T value){
     	if(node_pool.size() < 5){

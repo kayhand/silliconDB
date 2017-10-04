@@ -22,8 +22,8 @@ class Partitioner {
 	int getNumOfElements(){
 	    return element_size;
 	}
-	std::vector<std::string>& getSchema(){
-	    return schema;
+	std::vector<std::string>* getSchema(){
+	    return &schema;
 	}
 	int getNumOfAtts(){
 	    return num_of_atts;

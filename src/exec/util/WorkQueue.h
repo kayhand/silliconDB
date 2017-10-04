@@ -20,7 +20,12 @@ template <typename T> class WorkQueue
     atomic<Node<T>*> head;
     atomic<Node<T>*> tail;
     public:
-        WorkQueue(){}
+        WorkQueue(){	
+	    this->mq_id = -1;
+	    T dummy;
+	    head.store(new Node<T>(dummy));
+	    tail.store(head.load());
+	}
 
         WorkQueue(int q_id){
 	    this->mq_id = q_id;
@@ -199,9 +204,9 @@ template <typename T> class WorkQueue
         return mq_id;
     }
 
-    DataLoader* getDataLoader(){
-        return this->dataLoader;
-    }
+    //DataLoader* getDataLoader(){
+        //return this->dataLoader;
+    //}
 
 };
 
