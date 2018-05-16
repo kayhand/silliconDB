@@ -1,7 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
-#include "../network/util/TCPConnector.h"
+
+#include "network/util/TCPConnector.h"
 
 using namespace std;
 

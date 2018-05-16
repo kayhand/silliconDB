@@ -37,7 +37,7 @@ struct column_meta{
 
     int start = 0;
     int end = 0;
-    int col_size;
+    int col_size = 0;
 
     //Bitweaving style layout information
     int num_of_codes = -1; //Number of codes in each processor word (WORD_SIZE / num_of_bits + 1)
@@ -100,8 +100,9 @@ class DataCompressor{
     	Partitioner *partitioner;
 
 	int* distinct_keys;
-	void* bit_vector;
-	void* join_vector;
+	void* filter_vector;
+	void* join_vector1;
+	void* join_vector2;
 	int scale_factor = 1;
 
 	void cleanUp();
@@ -119,6 +120,7 @@ class DataCompressor{
     	
 	void createTableMeta();
     	void parseData();
+	void parseFactTable(column*, column*);
 	void createDictionaries();
 	void createEncoders();
 	void createColumns();
@@ -143,12 +145,16 @@ class DataCompressor{
 		return partitioner;
 	}
 
-	void* getBitVector(int offset){
-	    return static_cast<uint64_t *> (bit_vector) + offset;
+	void* getFilterBitVector(int offset){
+	    return static_cast<uint64_t *> (filter_vector) + offset;
 	}
 
-	void* getJoinBitVector(int offset){
-	    return static_cast<uint64_t *> (join_vector) + offset;
+	void* getJoinBitVector1(int offset){
+	    return static_cast<uint64_t *> (join_vector1) + offset;
+	}
+
+	void* getJoinBitVector2(int offset){
+	    return static_cast<uint64_t *> (join_vector2) + offset;
 	}
 	
 	int getNumOfParts(){
@@ -164,4 +170,3 @@ class DataCompressor{
 };
 
 #endif
-

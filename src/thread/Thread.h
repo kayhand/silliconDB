@@ -11,6 +11,13 @@
 #include <thread.h>
 #endif
 
+struct q_udata{
+    void* node_ptr;
+
+    hrtime_t t_start;
+    hrtime_t t_end;
+};
+
 template <class T> 
 struct Node{
     T value;
@@ -24,6 +31,7 @@ struct Node{
     	next.store(source.next.load());
     }
 
+    q_udata post_data;
     hrtime_t t_start;
     hrtime_t t_end;
 };
@@ -66,8 +74,8 @@ class Thread
     		    setAffinity(cpuid);
 		}
 		else
-    		    setAffinity(cpuid);
-    		    //setAffinity(cpuid * 8);
+    		    //setAffinity(cpuid);
+    		    setAffinity(cpuid * 8);
     	}
     	return result;
     }

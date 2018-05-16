@@ -1,17 +1,8 @@
 #ifndef __query_h__
 #define __query_h__
 
-#include "../data/DataLoader.h"
+#include "data/DataLoader.h"
 #include "Helper.h"
-
-struct q_udata{
-    int p_id = -1;
-    hrtime_t t_start;
-    void *src_data; 
-    void *dst_data;
-    uint64_t *bit_vector;
-    int copy_size;
-};
 
 class Query {
     public:
@@ -44,9 +35,6 @@ class Query {
 	int &getTableId(){
 	    return this->table_id;
 	}
-	q_udata &get_udata(){
-	    return udata;
-	}
 	void flipDax(){
 	    dax_flag = !dax_flag;
 	}
@@ -58,7 +46,6 @@ class Query {
         int p_type;
 	int part_id;
 	int table_id; // 0 -> lineitem, 1 -> agg
-	q_udata udata;
 	bool dax_flag = false;
 };
 

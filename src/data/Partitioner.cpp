@@ -18,18 +18,16 @@ void Partitioner::roundRobin(std::string path, int part_size)
     file.close();
 
     this->element_size = num_of_els;
+    this->segs_per_part = part_size / 64.0;
+    //this->segs_per_part = ceil((double) segs_per_part / 64) * 64;
 
-    int segs_per_part = part_size / 64.0;
-    this->segs_per_part = ceil((double) segs_per_part / 64) * 64;
-
-    int els_per_part = this->segs_per_part * 64;
+    //int els_per_part = this->segs_per_part * 64;
+    int els_per_part = part_size;
     this->num_of_parts = num_of_els / els_per_part;
 
-    int remainder = num_of_els - this->num_of_parts * els_per_part;
+    //int remainder = num_of_els - this->num_of_parts * els_per_part;
+    int remainder = num_of_els % part_size;
 
-    printf("Number of elements: %d\n", num_of_els);
-    printf("Number of partitions: %d, remainder: %d\n", this->num_of_parts, remainder);
-	
     int curPart;
     for(curPart = 0; curPart < this->num_of_parts; curPart++){
         partitionMap[curPart] = std::make_pair(curPart * els_per_part, curPart * els_per_part + (els_per_part - 1));
@@ -42,6 +40,9 @@ void Partitioner::roundRobin(std::string path, int part_size)
         partitionSizes[curPart] = remainder;
     }
 
+    printf("\nNumber of elements: %d, ", num_of_els);
+    printf("Number of partitions: %d, Remainder: %d\n", this->num_of_parts, remainder);
+	
     /*for(auto &curr : partitionMap){
         printf("%d : <%d, %d> \n", curr.first, curr.second.first, curr.second.second);	
     }

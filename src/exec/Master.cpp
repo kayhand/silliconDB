@@ -6,16 +6,16 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-#include "../thread/Thread.h"
-#include "../thread/ThreadHandler.h"
-#include "../thread/Syncronizer.h"
-#include "../network/server/TCPAcceptor.h"
-#include "../data/DataLoader.h"
-#include "../data/Partitioner.h"
-#include "../util/Query.h"
-#include "../bench/vldb2018/tpch/Query3.h"
+#include "thread/Thread.h"
+#include "thread/ThreadHandler.h"
+#include "thread/Syncronizer.h"
+#include "network/server/TCPAcceptor.h"
+#include "data/DataLoader.h"
+#include "data/Partitioner.h"
+#include "util/Query.h"
+#include "bench/vldb2018/tpch/Query3.h"
 #include "util/WorkQueue.h"
-#include "../sched/ProcessingUnit.h"
+#include "sched/ProcessingUnit.h"
 
 std::atomic<int> li_cnt = ATOMIC_VAR_INIT(0);
 std::atomic<int> o_cnt = ATOMIC_VAR_INIT(0);
@@ -30,13 +30,13 @@ int main(int argc, char** argv)
 	int workers = atoi(argv[1]);
 	int port = atoi(argv[2]);
 	string ip = argv[3];
-	string fileName = argv[4];
-	string fileName2 = argv[5];
-	int part_size = atoi(argv[6]);
-	int sf = 1;
-	if(argc == 8)
-	    sf = atoi(argv[7]);
-
+	string fileName = argv[4]; //lineorder
+	string fileName2 = argv[5]; //date
+	string fileName3 = argv[6]; //customer
+	int part_size = atoi(argv[7]);
+	int dax_queue_size = atoi(argv[8]);
+	int sf = atoi(argv[9]);
+	
 	//Synchronization: Init params
 	int num_of_barriers = workers + 1;
 	Syncronizer thr_sync;
@@ -46,20 +46,27 @@ int main(int argc, char** argv)
 	//Partitioner: Create partition metadata
 	Partitioner line_part;
 	line_part.roundRobin(fileName, part_size); 
-	Partitioner order_part;
-	order_part.roundRobin(fileName2, part_size); 
+	Partitioner date_part;
+	date_part.roundRobin(fileName2, part_size); 
+	Partitioner customer_part;
+	customer_part.roundRobin(fileName3, part_size); 
 
 	//DataLoader: Init loader
 	//DataLoader: Create data compressor (merge with initialization)
 	//DataLoader: Do compression
-	DataLoader data_loader(2);
+	DataLoader data_loader(3);
+
+	data_loader.initializeCompressor(fileName2, 1, date_part, sf);
+	data_loader.parseTable(1);
+	data_loader.compressTable(1);
+
+	data_loader.initializeCompressor(fileName3, 2, customer_part, sf);
+	data_loader.parseTable(2);
+	data_loader.compressTable(2);
+
 	data_loader.initializeCompressor(fileName, 0, line_part, sf);
 	data_loader.parseTable(0);
 	data_loader.compressTable(0);
-
-	data_loader.initializeCompressor(fileName2, 1, order_part, sf);
-	data_loader.parseTable(1);
-	data_loader.compressTable(1);
 
 	//SiliconDB Handler
 	// 1) Create processing units and resource handlers for them
@@ -76,15 +83,20 @@ int main(int argc, char** argv)
 	std::vector<ProcessingUnit*> proc_units;
     	proc_units.reserve(10);
 	
+	EXEC_TYPE e_type = EXEC_TYPE::SHARED_QUEUE;
+
         for(int i = 0; i < 1; i++){
 	    ProcessingUnit *proc_unit = new ProcessingUnit(workers);
 	    proc_unit->addCompressedTable(data_loader.getDataCompressor(0));
 	    proc_unit->addCompressedTable(data_loader.getDataCompressor(1));
+	    proc_unit->addCompressedTable(data_loader.getDataCompressor(2));
 
-	    proc_unit->createProcessingUnit(&thr_sync);
+	    proc_unit->initializeAPI();
+	    proc_unit->createProcessingUnit(&thr_sync, e_type, dax_queue_size);
 	    //for(int i = 0; i < 10; i++){
-	    	proc_unit->addWork(line_part.getNumberOfParts(), 0, sf);
-	    	proc_unit->addWork(order_part.getNumberOfParts(), 1, sf);
+	    	proc_unit->addWork(customer_part.getNumberOfParts(), 2, sf, proc_unit->getSharedQueue());
+	    	proc_unit->addWork(date_part.getNumberOfParts(), 1, sf, proc_unit->getSharedQueue());
+	    	proc_unit->addWork(line_part.getNumberOfParts(), 0, sf, proc_unit->getSharedQueue());
 	    //}
 	    proc_units.push_back(proc_unit);
         }

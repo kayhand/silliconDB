@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+
 #include "TCPStream.h"
 
 TCPStream::TCPStream(int sd, struct sockaddr_in* address) : m_sd(sd) 

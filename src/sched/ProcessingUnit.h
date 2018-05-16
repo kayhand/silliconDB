@@ -8,49 +8,57 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "../thread/Thread.h"
-#include "../thread/ThreadHandler.h"
+#include "thread/Thread.h"
+#include "thread/ThreadHandler.h"
+#include "thread/CoreQtBenchHandler.h"
+#include "thread/DaxQtBenchHandler.h"
 
-#include "../util/Query.h"
-#include "../data/DataCompressor.h"
-#include "../exec/util/WorkQueue.h"
-#include "../thread/Syncronizer.h"
+#include "util/Query.h"
+#include "data/DataCompressor.h"
+#include "exec/util/WorkQueue.h"
+#include "thread/Syncronizer.h"
+#include "api/ScanApi.h"
+#include "api/JoinApi.h"
 
 class ProcessingUnit{
-    std::vector<CoreHandler<Query>*> coreHandlers;
+    std::vector<CoreQtBenchHandler<Query>*> coreHandlers;
     #ifdef __sun 
-        std::vector<DaxHandler<Query>*> daxHandlers;
+        std::vector<DaxQtBenchHandler<Query>*> daxHandlers;
     #endif
 
     int numOfComputeUnits;
 
     WorkQueue<Query> sharedQueue; 
     WorkQueue<Query> swQueue; 
-    WorkQueue<Query> daxQueue;
+    WorkQueue<Query> hwQueue;
 
     std::vector<DataCompressor*> dataArr;
+    std::vector<ScanApi*> scanAPIs;
 
     public: 
         ProcessingUnit(int);
         ~ProcessingUnit();
 
     void addCompressedTable(DataCompressor*);
-    void createProcessingUnit(Syncronizer*);
-    void addWork(int, int, int);
+    void createProcessingUnit(Syncronizer*, EXEC_TYPE, int);
+    void addWork(int, int, int, WorkQueue<Query>*);
     void startThreads(TCPStream*);
     void joinThreads();
     void writeResults();
 
-    WorkQueue<Query>& getSharedQueue(){
-        return sharedQueue;
+    void initializeAPI();
+
+
+    WorkQueue<Query>* getSharedQueue(){
+        return &sharedQueue;
     }
 
-    WorkQueue<Query>& getSWQueue(){
-        return swQueue;
+    WorkQueue<Query>* getSWQueue(){
+        return &swQueue;
     }
 
-    WorkQueue<Query>& getHWQueue(){
-        return daxQueue;
+    WorkQueue<Query>* getHWQueue(){
+        return &hwQueue;
     }
 };
 

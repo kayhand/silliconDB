@@ -42,23 +42,23 @@ class Result {
 	void writeResults(JobType j_type, FILE *f_pointer){
 	    if(j_type == SW_SCAN){
 	        for(time_pair curr : sw_scan_runtimes)
-	    	    fprintf(f_pointer, "SW Scan %llu::%llu::%llu\n", get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
+	    	    fprintf(f_pointer, "%llu %llu %llu\n", get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
 	    }
 	    else if(j_type == DAX_SCAN){
 	        for(time_pair curr : dax_scan_runtimes)
-	    	    fprintf(f_pointer, "DAX Scan %llu::%llu::%llu\n", get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
+	    	    fprintf(f_pointer, "DAX Scan %llu %llu %llu\n", get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
 	    }
 	    else if(j_type == AGG){
 	        for(time_pair curr : agg_runtimes)
-	    	    fprintf(f_pointer, "SW Agg %llu::%llu::%llu\n", get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
+	    	    fprintf(f_pointer, "SW Agg %llu %llu %llu\n", get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
 	    }
 	    else if(j_type == COUNT){
 	        for(time_pair curr : count_runtimes)
-	    	    fprintf(f_pointer, "SW Count %llu::%llu::%llu\n", get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
+	    	    fprintf(f_pointer, "SW Count %llu %llu %llu\n", get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
 	    }
 	    else if(j_type == JOIN){
 	        for(time_pair curr : join_runtimes)
-	    	    fprintf(f_pointer, "DAX Join %llu::%llu::%llu\n", get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
+	    	    fprintf(f_pointer, "DAX Join %llu %llu %llu\n", get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
 	    }
 	}
 

@@ -24,7 +24,13 @@ class DataLoader{
 
     void parseTable(int t_id){
  	 dataCompressors[t_id]->createTableMeta();
- 	 dataCompressors[t_id]->parseData();
+	 if(t_id == 0){
+	     column* datePKCol = &(dataCompressors[1]->getTable()->columns[0]);
+	     column* custPKCol = &(dataCompressors[2]->getTable()->columns[0]);
+	     dataCompressors[t_id]->parseFactTable(datePKCol, custPKCol);
+	 }
+	 else
+ 	     dataCompressors[t_id]->parseData();
     }
 
     void compressTable(int t_id){
