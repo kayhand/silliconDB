@@ -17,8 +17,10 @@
 #include "data/DataCompressor.h"
 #include "exec/util/WorkQueue.h"
 #include "thread/Syncronizer.h"
+
 #include "api/ScanApi.h"
 #include "api/JoinApi.h"
+#include "api/AggApi.h"
 
 class ProcessingUnit{
     std::vector<CoreQtBenchHandler<Query>*> coreHandlers;
@@ -34,6 +36,8 @@ class ProcessingUnit{
 
     std::vector<DataCompressor*> dataArr;
     std::vector<ScanApi*> scanAPIs;
+    std::vector<JoinApi*> joinAPIs;
+    std::vector<AggApi*> aggAPIs;
 
     public: 
         ProcessingUnit(int);

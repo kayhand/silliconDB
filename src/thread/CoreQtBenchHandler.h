@@ -13,7 +13,6 @@
 #include "network/server/TCPAcceptor.h"
 #include "log/Result.h"
 
-#include "bench/vldb2018/tpch/Query3.h"
 #include "api/ScanApi.h"
 
 #ifdef __sun 
@@ -29,47 +28,72 @@ class CoreQtBenchHandler : public ThreadHandler<T>
         Node<T> *node_item;
 	T item;
 
-	ScanApi *api_ls = this->scanAPIs[0];
-	ScanApi *api_ds = this->scanAPIs[1];
-	ScanApi *api_cs = this->scanAPIs[2];
-
-        while(work_queue->getHead() != work_queue->getTail()){
-//	    break;
-            node_item = work_queue->remove_ref_core();
-	    if(node_item == NULL)
-	        break;
-            item = node_item->value;
-	    if(item.getTableId() == 0){
-//            	Query3::simdScan_16(this->dataVector[0], item.getPart(), 8, &(this->result), true);
-		api_ls->simdScan16(node_item, &(this->result));
-            	this->putFreeNode(node_item);
-//		this->addNewJob(1, item.getPart(), 11, work_queue);
-	    }
-	    else if(item.getTableId() == 1){
-//            	Query3::simdScan_16(this->dataVector[1], item.getPart(), 4, &(this->result), false);
-		api_ds->simdScan16(node_item, &(this->result));
-            	this->putFreeNode(node_item);
-	    }
-	    else if(item.getTableId() == 2){
-//            	Query3::simdScan_16(this->dataVector[1], item.getPart(), 4, &(this->result), false);
-		api_cs->simdScan16(node_item, &(this->result));
-            	this->putFreeNode(node_item);
-	    }
-
-	    else if(item.getTableId() == 11){
-	        //Query3::join_sw(this->dataVector[0], this->dataVector[1], item.getPart(), &(this->result));
-		this->putFreeNode(node_item);
-		this->addNewJob(1, item.getPart(), 11, work_queue);
-		break;
-	    }
-        }
+        //while(!this->thr_sync->isQueryCompleted()){
+        while(true){
+		if(this->sw_queue->getHead() != this->sw_queue->getTail()){
+		    node_item = this->sw_queue->remove_ref_core();
+		    if(node_item == NULL)
+		    	continue;
+		    item = node_item->value;
+		    if(item.getTableId() == 21){
+			this->api_agg->agg(node_item, &(this->result));
+			this->putFreeNode(node_item);
+			this->thr_sync->incrementAggCounter();
+		    }
+		}
+		else if(work_queue->getHead() != work_queue->getTail()){
+		    node_item = work_queue->remove_ref_core();
+		    if(node_item == NULL)
+		    	continue;
+		    item = node_item->value;
+		    if(item.getTableId() == 0){
+			this->api_ls->simdScan16(node_item, &(this->result));
+			this->api_ls->incrementCounter();
+			this->putFreeNode(node_item);
+			this->addNewJob(1, item.getPart(), 11, work_queue);
+			this->addNewJob(1, item.getPart(), 12, work_queue);
+		    }
+		    else if(item.getTableId() == 1){
+			this->api_ss->simdScan16(node_item, &(this->result));
+			this->api_ss->incrementCounter();
+			this->putFreeNode(node_item);
+		    }
+		    else if(item.getTableId() == 2){
+			this->api_cs->simdScan16(node_item, &(this->result));
+			this->api_cs->incrementCounter();
+			this->putFreeNode(node_item);
+		    }
+		    else if(item.getTableId() == 11){
+			this->j1_lc->swJoin(node_item, &(this->result));
+			this->j1_lc->setExecFlag(item.getPart());
+			this->putFreeNode(node_item);
+			this->addNewJob(1, item.getPart(), 21, this->sw_queue);
+			/*
+			int p_id = item.getPart();
+    		        if(p_id == 45 || p_id == 46){
+		            printf("Printing join result for part %d ...\n", p_id);
+		    	    uint64_t * result_vector = (uint64_t *) this->j1_lc->getJoinBitVector(p_id);
+		            this->j1_lc->printBitVector(result_vector[6], 7);
+		        }
+			*/
+		    }
+		    else if(item.getTableId() == 12){
+			this->j2_ls->swJoin(node_item, &(this->result));
+			this->j2_ls->setExecFlag(item.getPart());
+			this->putFreeNode(node_item);
+		    }
+		}
+		else{
+		    break;
+		}
+	}
     }
 
     public:
         CoreQtBenchHandler(Syncronizer *sync, WorkQueue<T> *shared_queue, std::vector<DataCompressor*> &dataVector ) : ThreadHandler <T> (sync, shared_queue, dataVector){}
-        //CoreQtBenchHandler(Syncronizer *sync, ProcessingUnit *procUnit) : ThreadHandler <T> (sync, procUnit){}
 
     void *run(){
+        this->thr_sync->initAggCounter(this->api_ls->totalParts());
         this->thr_sync->waitOnStartBarrier();
 
         this->startExec(this->shared_queue);

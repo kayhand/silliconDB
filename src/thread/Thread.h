@@ -188,7 +188,7 @@ class Thread
     }
 
     Node<T>* returnNextNode(int r_id, int p_id, int j_type){
-    	if(node_pool.size() < 5){
+    	if(node_pool.size() < 20){
 	    Node<T>* newNode = new Node<T>();
             newNode->value.setFields(r_id, p_id, j_type);
 	    return newNode;

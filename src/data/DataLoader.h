@@ -17,17 +17,17 @@ class DataLoader{
 	}
 	std::vector<DataCompressor*> dataCompressors;
 
-    void initializeCompressor(string fileName, int t_id, Partitioner &part, int sf){
-        DataCompressor *compressedTable = new DataCompressor(fileName, t_id, part, sf);
+    void initializeCompressor(string fileName, int t_id, int agg_id, Partitioner &part, int sf){
+        DataCompressor *compressedTable = new DataCompressor(fileName, t_id, agg_id, part, sf);
    	dataCompressors.at(t_id) = compressedTable;
     }
 
     void parseTable(int t_id){
  	 dataCompressors[t_id]->createTableMeta();
 	 if(t_id == 0){
-	     column* datePKCol = &(dataCompressors[1]->getTable()->columns[0]);
+	     column* suppPKCol = &(dataCompressors[1]->getTable()->columns[0]);
 	     column* custPKCol = &(dataCompressors[2]->getTable()->columns[0]);
-	     dataCompressors[t_id]->parseFactTable(datePKCol, custPKCol);
+	     dataCompressors[t_id]->parseFactTable(suppPKCol, custPKCol);
 	 }
 	 else
  	     dataCompressors[t_id]->parseData();

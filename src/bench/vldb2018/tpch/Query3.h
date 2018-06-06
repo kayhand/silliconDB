@@ -6,9 +6,10 @@ extern "C"{
     #include "/usr/include/dax.h"
 }
 #endif
-#include "../../../util/Query.h"
-#include "../../../data/DataLoader.h"
-#include "../../../log/Result.h"
+#include "util/Query.h"
+#include "data/DataLoader.h"
+#include "log/Result.h"
+#include "thread/Thread.h"
 
 typedef int v2si __attribute__ ((vector_size (8))); //2 of 32 bit units -- in total 8 bytes
 typedef short v4hi __attribute__ ((vector_size (8))); //4 of 16 bit units -- in total 8 bytes
@@ -28,10 +29,9 @@ class Query3 {
 	static void swScan(DataCompressor *dataComp, int scaledPart, int selCol, Result *result, bool gt);
 	static void join_sw(DataCompressor *lineitemComp, DataCompressor *ordersComp, int curPart, Result *result);
 
-	static void simdscan_16(DataCompressor *dataComp, int scaledPart, Result *result, int t_id);
+	static void simdScan_16(DataCompressor *dataComp, int scaledPart, int selCol, Result *result, bool gt); 
 	static void simdScan_24(DataCompressor *dataComp, int scaledPart, int selCol, Result *result, bool gt); 
 
-	template <class T_okey, class T_extp, class T_disc>
 	static void agg(DataCompressor *dataComp, int curPart, Result *result);
 
 	static void count(DataCompressor *dataComp, int curPart, Result *result);

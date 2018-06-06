@@ -17,24 +17,22 @@ void ScanApi::hwScan(dax_queue_t **queue, Node<Query>* node){
     this->dst.elements = num_of_els;
 
     void* bit_vector = getFilterBitVector(curPart * this->num_of_segments);
-//    printf("Dax will scan part (%d) for table (%d) -- \n bit vector start: %d \n", curPart, node->value.getTableId(), curPart * this->num_of_segments);
-    dst.data = bit_vector;//*
+    dst.data = bit_vector;
 
     node->t_start = gethrtime();
     node->post_data.t_start = gethrtime();
     node->post_data.node_ptr = (void *) node;
 
-    //dax_status_t scan_status = dax_scan_value_post(*queue, this->flag, &(this->src), &(this->dst), this->cmp, &(this->predicate), (void *) node);
     dax_status_t scan_status = dax_scan_value_post(*queue, flag, &src, &dst, cmp, &predicate, (void *) &(node->post_data));
-  //  printf("Dax (%d), (%d)\n", curPart, node->value.getTableId());
+    //printf("Dax (%d), (%d)\n", curPart, node->value.getTableId());
     if(scan_status != 0)
         printf("Dax Error! %d\n", scan_status);
-
 } 
 #endif
 
 void ScanApi::simdScan16(Node<Query>* node, Result *result){
     int curPart = node->value.getPart();
+    int t_id = baseTable->t_meta.t_id;
     int ind = colId + (curPart) * baseTable->t_meta.num_of_columns;
     column *col = &(baseTable->columns[ind]);
 
@@ -50,9 +48,9 @@ void ScanApi::simdScan16(Node<Query>* node, Result *result){
     uint64_t* bit_vector = (uint64_t*) getFilterBitVector(curPart * this->num_of_segments);
     int extra_vals = (col->c_meta.num_of_segments * 64) - col->c_meta.col_size; 
 
-    if(extra_vals > 0){
-        printf("Size: %d - extra: %d, segs: %d (part: %d)\n", col->c_meta.col_size, extra_vals, col->c_meta.num_of_segments, curPart); 
-    }
+    //if(extra_vals > 0){
+      //  printf("Size: %d - extra: %d, segs: %d (part: %d)\n", col->c_meta.col_size, extra_vals, col->c_meta.num_of_segments, curPart); 
+    //}
     uint64_t clear_vector = ((1ul << col->c_meta.col_size) - 1) << extra_vals;
 
     uint64_t *data_p = 0;
@@ -94,9 +92,9 @@ void ScanApi::simdScan16(Node<Query>* node, Result *result){
 	count += __builtin_popcountl(bit_vector[i - 1]);
     }
 
-    result->addRuntime(SW_SCAN, make_tuple(t_start, t_end));
+    result->addRuntime(SW_SCAN, make_tuple(t_start, t_end, t_id, curPart));
     result->addCountResult(make_tuple(count, baseTable->t_meta.t_id));
-    printf("Core Count: %d for part %d\n", count, curPart);
+    //printf("Core Count: %d for part %d\n", count, curPart);
 
     //if(extra_vals > 0)
         //printBitVector(bit_vector, col->c_meta.num_of_segments, clear_vector);

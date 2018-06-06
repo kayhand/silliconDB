@@ -14,6 +14,8 @@ class Syncronizer
     pthread_barrier_t end_barrier;
     pthread_barrier_t agg_barrier;
 
+    std::atomic<int> agg_counter;
+
     public:
         Syncronizer(){} 
  	 
@@ -22,6 +24,18 @@ class Syncronizer
             pthread_barrier_init(&end_barrier, NULL, num_of_workers);
             pthread_barrier_init(&agg_barrier, NULL, num_of_workers);
         }
+
+	void initAggCounter(int num_of_parts){
+	    agg_counter = ATOMIC_VAR_INIT(num_of_parts);
+	}
+
+	void incrementAggCounter(){
+	    agg_counter--;
+	}
+
+	bool isQueryCompleted(){
+	    return agg_counter == 0;
+	}
 
         void waitOnStartBarrier(){
             pthread_barrier_wait(&start_barrier);

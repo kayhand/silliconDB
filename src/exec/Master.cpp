@@ -31,7 +31,7 @@ int main(int argc, char** argv)
 	int port = atoi(argv[2]);
 	string ip = argv[3];
 	string fileName = argv[4]; //lineorder
-	string fileName2 = argv[5]; //date
+	string fileName2 = argv[5]; //supplier
 	string fileName3 = argv[6]; //customer
 	int part_size = atoi(argv[7]);
 	int dax_queue_size = atoi(argv[8]);
@@ -46,8 +46,8 @@ int main(int argc, char** argv)
 	//Partitioner: Create partition metadata
 	Partitioner line_part;
 	line_part.roundRobin(fileName, part_size); 
-	Partitioner date_part;
-	date_part.roundRobin(fileName2, part_size); 
+	Partitioner supp_part;
+	supp_part.roundRobin(fileName2, part_size); 
 	Partitioner customer_part;
 	customer_part.roundRobin(fileName3, part_size); 
 
@@ -56,15 +56,15 @@ int main(int argc, char** argv)
 	//DataLoader: Do compression
 	DataLoader data_loader(3);
 
-	data_loader.initializeCompressor(fileName2, 1, date_part, sf);
+	data_loader.initializeCompressor(fileName2, 1, 4, supp_part, sf); //4: s_nation
 	data_loader.parseTable(1);
 	data_loader.compressTable(1);
 
-	data_loader.initializeCompressor(fileName3, 2, customer_part, sf);
+	data_loader.initializeCompressor(fileName3, 2, 4, customer_part, sf); //4: c_nation
 	data_loader.parseTable(2);
 	data_loader.compressTable(2);
 
-	data_loader.initializeCompressor(fileName, 0, line_part, sf);
+	data_loader.initializeCompressor(fileName, 0, -1, line_part, sf); //-1: no lineorder columns as agg. key
 	data_loader.parseTable(0);
 	data_loader.compressTable(0);
 
@@ -95,7 +95,7 @@ int main(int argc, char** argv)
 	    proc_unit->createProcessingUnit(&thr_sync, e_type, dax_queue_size);
 	    //for(int i = 0; i < 10; i++){
 	    	proc_unit->addWork(customer_part.getNumberOfParts(), 2, sf, proc_unit->getSharedQueue());
-	    	proc_unit->addWork(date_part.getNumberOfParts(), 1, sf, proc_unit->getSharedQueue());
+	    	proc_unit->addWork(supp_part.getNumberOfParts(), 1, sf, proc_unit->getSharedQueue());
 	    	proc_unit->addWork(line_part.getNumberOfParts(), 0, sf, proc_unit->getSharedQueue());
 	    //}
 	    proc_units.push_back(proc_unit);

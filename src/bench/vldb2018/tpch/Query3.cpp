@@ -1,5 +1,4 @@
 #include "Query3.h"
-#include "../../../thread/Thread.h"
 
 #include <algorithm>
 #include <cstring>
@@ -54,7 +53,7 @@ void Query3::hwScan(DataCompressor *dataComp, int scaledPart, int selCol, dax_co
     int num_of_segments = dataComp->getPartitioner()->getSegsPerPart();
     if(scaledPart == 0)
         num_of_segments = 0;
-    void* bit_vector = dataComp->getBitVector(curPart * num_of_segments);
+    void* bit_vector = dataComp->getFilterBitVector(curPart * num_of_segments);
     dst.data = bit_vector;
 
     uint64_t flag = DAX_CACHE_DST;
@@ -68,6 +67,7 @@ void Query3::hwScan(DataCompressor *dataComp, int scaledPart, int selCol, dax_co
     	t_end = gethrtime();
     	result->addCountResultDax(make_tuple(scan_res.count, compTable->t_meta.t_id));
     	result->addRuntime(DAX_SCAN, make_tuple(t_start, t_end));
+	//printf("Scan count:%d\n", (int) scan_res.count);
     }
     else{
     	((Node<Query>*) udata)->t_start = t_start;
@@ -102,7 +102,7 @@ void Query3::swScan(DataCompressor *dataComp, int scaledPart, int selCol, Result
     uint64_t local_res = 0;
     uint64_t data_vector = 0;
     int num_of_segments = dataComp->getPartitioner()->getSegsPerPart();
-    uint64_t* bit_vector = (uint64_t*) dataComp->getBitVector(curPart * num_of_segments);
+    uint64_t* bit_vector = (uint64_t*) dataComp->getFilterBitVector(curPart * num_of_segments);
         
     hrtime_t t_start, t_end;
     t_start = gethrtime();
@@ -143,6 +143,58 @@ void Query3::swScan(DataCompressor *dataComp, int scaledPart, int selCol, Result
     result->addCountResult(make_tuple(count, compTable->t_meta.t_id)); 
 }
 
+void Query3::simdScan_16(DataCompressor *dataComp, int scaledPart, int selCol, Result *result, bool lt){ 
+    table *compTable = dataComp->getTable();
+    int num_of_parts = dataComp->getNumOfParts();
+    int curPart = scaledPart % num_of_parts;
+    int ind = selCol + curPart * compTable->t_meta.num_of_columns;
+    column *col = &(compTable->columns[ind]);
+    
+    v4hi data_vec = {0, 0, 0, 0};
+    v4hi converted_pred = {0, 0, 0, 0};
+
+    uint16_t predicate = compTable->columns[selCol].i_keys[25];
+    if(!lt)
+        predicate = compTable->columns[selCol].i_keys[1993];
+    converted_pred += predicate;
+
+    uint64_t cur_result = 0;
+    int count = 0;
+    int total_lines = col->encoder.num_of_bits + 1; 
+    int num_of_segments = dataComp->getPartitioner()->getSegsPerPart();
+    uint64_t* bit_vector = (uint64_t*) dataComp->getFilterBitVector(curPart * num_of_segments);
+    uint64_t *data_p = 0;
+
+    int dataInd = 0;
+    int i = 0, j = 0;
+        
+    hrtime_t t_start, t_end;
+    t_start = gethrtime();
+    for(i = 0; i < col->c_meta.num_of_segments; i++){
+        for(j = 0; j < total_lines; j++){
+	    cur_result <<= 4;
+	    dataInd = i * total_lines + j;
+	    data_p = col->compressed + dataInd;
+
+            data_vec = (v4hi) *(data_p);
+	    if(lt)
+	        cur_result |= __builtin_vis_fcmpgt16(data_vec, converted_pred);  
+	    else
+	        cur_result |= __builtin_vis_fcmpeq16(data_vec, converted_pred);  
+        }
+	if(lt)
+	    cur_result = ~cur_result;
+	bit_vector[i] = cur_result;
+	int cnt = __builtin_popcountl(cur_result);
+	count += cnt;
+        cur_result = 0;
+    } 
+    t_end = gethrtime();
+    result->addRuntime(SW_SCAN, make_tuple(t_start, t_end));
+    result->addCountResult(make_tuple(count, compTable->t_meta.t_id));
+    //printf("SW Count(%d): %d (%d)\n", curPart, count, compTable->t_meta.t_id);
+}
+
 void Query3::simdScan_24(DataCompressor *dataComp, int scaledPart, int selCol, Result *result, bool gt){ 
     table *compTable = dataComp->getTable();
     int num_of_parts = dataComp->getNumOfParts();
@@ -169,7 +221,7 @@ void Query3::simdScan_24(DataCompressor *dataComp, int scaledPart, int selCol, R
     int count = 0;
     int total_lines = col->encoder.num_of_bits + 1; 
     int num_of_segments = dataComp->getPartitioner()->getSegsPerPart();
-    uint64_t* bit_vector = (uint64_t*) dataComp->getBitVector(curPart * num_of_segments);
+    uint64_t* bit_vector = (uint64_t*) dataComp->getFilterBitVector(curPart * num_of_segments);
     uint64_t *data_p = 0;
 
     int dataInd = 0;
@@ -250,12 +302,12 @@ void Query3::join_hw(DataCompressor *lineitemComp, DataCompressor *ordersComp, i
     if(src.elem_width > 16){
         src.format = DAX_BYTES;
 	src.elem_width /= 8;
-    	printf("Bytes:%d\n", src.elem_width);
+    	//printf("Bytes:%d\n", src.elem_width);
     }
     src.data = lokey_col->compressed;
 
     int num_of_segments = lineitemComp->getPartitioner()->getSegsPerPart();
-    void* bit_vector = lineitemComp->getJoinBitVector(curPart * num_of_segments);
+    void* bit_vector = lineitemComp->getJoinBitVector1(curPart * num_of_segments);
 
     dst.elements = src.elements;
     dst.offset = 0;
@@ -266,7 +318,7 @@ void Query3::join_hw(DataCompressor *lineitemComp, DataCompressor *ordersComp, i
     bit_map.elements = ordersTable->t_meta.num_of_lines;
     bit_map.format = DAX_BITS;
     bit_map.elem_width = 1;
-    bit_map.data = ordersComp->getBitVector(0);
+    bit_map.data = ordersComp->getFilterBitVector(0);
     // src -- l_orderkey column from lineitem table
     // bit_map -- global bit vector result coming from the orders scan
 
@@ -277,14 +329,15 @@ void Query3::join_hw(DataCompressor *lineitemComp, DataCompressor *ordersComp, i
     	if(join_res.status != 0)
             printf("Dax Error! %d\n", join_res.status);
     	result->addCountResult(make_tuple(join_res.count, 2)); 
+        t_end = gethrtime();
+        result->addRuntime(JOIN, make_tuple(t_start, t_end));
     }
     else{
+    	((Node<Query>*) udata)->t_start = t_start;
     	dax_status_t join_status = dax_translate_post(*queue, 0, &src, &dst, &bit_map, elem_bits, udata);
     	if(join_status != 0)
             printf("Dax Join Error! %d for part %d\n", join_status, curPart);
     }
-    t_end = gethrtime();
-    result->addRuntime(JOIN, make_tuple(t_start, t_end));
 } 
 #endif
 
@@ -297,8 +350,8 @@ void Query3::join_sw(DataCompressor *lineitemComp, DataCompressor *ordersComp, i
     int remaining_els = lokey_col->c_meta.end - lokey_col->c_meta.start + 1;
 
     uint32_t* lokey_vals = lokey_col->data;
-    uint64_t* bitmap_vector = (uint64_t *) ordersComp->getBitVector(0);
-    uint64_t* join_vector = (uint64_t *) lineitemComp->getJoinBitVector(curPart * num_of_segments);
+    uint64_t* bitmap_vector = (uint64_t *) ordersComp->getFilterBitVector(0);
+    uint64_t* join_vector = (uint64_t *) lineitemComp->getJoinBitVector1(curPart * num_of_segments);
 
     // src -- l_orderkey column from lineitem table
     // bit_map -- global bit vector result coming from the orders scan
@@ -327,20 +380,18 @@ void Query3::join_sw(DataCompressor *lineitemComp, DataCompressor *ordersComp, i
     for(int i = 0; i < num_of_segments; i++){
         count += __builtin_popcountl(join_vector[i]);
     }
-    printf("Join count:%d\n\n", count);
     result->addRuntime(JOIN, make_tuple(t_start, t_end));
     result->addCountResult(make_tuple(count, 2));
-
 }
 
-template <class T_okey, class T_extp, class T_disc>
 void Query3::agg(DataCompressor *dataComp, int curPart, Result *result){
     table *lineTable = dataComp->getTable();
 
     int okey_ind = 0 + curPart * lineTable->t_meta.num_of_columns;
 
-    column *okey_col = &(lineTable->columns[okey_ind]);
-    column *extp_col = &(lineTable->columns[okey_ind + 5]);
+    //column *okey_col = &(lineTable->columns[okey_ind]);
+    column *qt_col = &(lineTable->columns[okey_ind + 4]);
+    //column *extp_col = &(lineTable->columns[okey_ind + 5]);
     //column *disc_col = &(lineTable->columns[okey_ind + 6]);
 
     //int distinct_okeys = dataComp->getDistinctKeys(0);
@@ -349,17 +400,18 @@ void Query3::agg(DataCompressor *dataComp, int curPart, Result *result){
     unordered_map<uint32_t, float> results;
 
     //int num_of_segments = okey_col->c_meta.num_of_segments;
-    int num_of_segments = okey_col->c_meta.end - okey_col->c_meta.start + 1;
+    int num_of_segments = qt_col->c_meta.end - qt_col->c_meta.start + 1;
     num_of_segments = ceil(num_of_segments / 64.0);
-    uint64_t* j_vector = (uint64_t *) dataComp->getJoinBitVector(curPart * num_of_segments);
+    uint64_t* j_vector = (uint64_t *) dataComp->getJoinBitVector1(curPart * num_of_segments);
     uint64_t cur_vec;
 
-    uint32_t o_key = 0;
-    double ext_price = 0;
+    //uint32_t o_key = 0;
+    int quantity = 0;
+    //uint32_t ext_price = 0;
     //double disc = 0;
 
-    T_okey *compressed_data = (T_okey *) okey_col->data;
-    T_extp *extp_comp = (T_extp *) extp_col->data;
+    //uint32_t *compressed_data = okey_col->data;
+    uint32_t *qt_comp = qt_col->data;
     //T_disc *disc_comp =(T_disc *) disc_col->data;
 
     #ifdef __sun 
@@ -374,16 +426,18 @@ void Query3::agg(DataCompressor *dataComp, int curPart, Result *result){
 	    //data_ind = (63 - (__builtin_ffsl(cur_vec) - 1)) + i * 64; //find the first set bit
 	    data_ind = 64 - __builtin_ffsl(cur_vec);
 	    data_ind = data_ind + i * 64; //find the first set bit
-            o_key = okey_col->encoder.i_dict[compressed_data[data_ind]]; 
+            //o_key = okey_col->encoder.i_dict[compressed_data[data_ind]]; 
 			
-	    ext_price = extp_col->encoder.d_dict[extp_comp[data_ind]]; 
+	    quantity += qt_col->encoder.i_dict[qt_comp[data_ind]]; 
+	    //ext_price += qt_col->encoder.d_dict[extp_comp[data_ind]]; 
 	    //disc = disc_col->d_dict[disc_comp[data_ind]]; 
-	    if(results.find(o_key) == results.end())
+	    /*if(results.find(o_key) == results.end())
 	        //results[o_key] = ext_price * (1 - disc);
 	        results[o_key] = ext_price;
 	    else
 	        //results.at(o_key) += ext_price * (1 - disc);
 	        results.at(o_key) += ext_price;
+	    */
 	    cur_vec &= (cur_vec - 1);
 	}
     }
@@ -394,12 +448,13 @@ void Query3::agg(DataCompressor *dataComp, int curPart, Result *result){
      
     result->addRuntime(AGG, make_tuple(t_start, t_end));
     tuple <int, float> agg_r;
-    for(auto &agg_r : results){
-    	result->addAggResultQ3(agg_r);
-    }
+    //for(auto &agg_r : results){
+    	//result->addAggResultQ3(agg_r);
+    //}
+    result->addCountResult(make_tuple(quantity, 3));
 }
-template void Query3::agg<uint16_t, uint32_t, uint8_t>(DataCompressor *dataComp, int curPart, Result *result);
-template void Query3::agg<uint32_t, uint32_t, uint8_t>(DataCompressor *dataComp, int curPart, Result *result);
+//template void Query3::agg<uint16_t, uint32_t, uint8_t>(DataCompressor *dataComp, int curPart, Result *result);
+//template void Query3::agg<uint32_t, uint32_t, uint8_t>(DataCompressor *dataComp, int curPart, Result *result);
 
 void Query3::count(DataCompressor *dataComp, int curPart, Result *result){
     //table *compTable = dataComp->getTable();
@@ -410,7 +465,7 @@ void Query3::count(DataCompressor *dataComp, int curPart, Result *result){
     //int remainder = 64 - remaining_data % 64;
     
     int num_of_segments = dataComp->getPartitioner()->getSegsPerPart();
-    uint64_t* bit_vector = (uint64_t *) dataComp->getJoinBitVector(curPart * num_of_segments);
+    uint64_t* bit_vector = (uint64_t *) dataComp->getJoinBitVector1(curPart * num_of_segments);
     printf("YOO FIX ME!!!\n");
 
     int count = 0;

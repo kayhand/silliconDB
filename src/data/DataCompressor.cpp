@@ -1,11 +1,12 @@
 #include "DataCompressor.h"
 using namespace std;
 
-DataCompressor::DataCompressor(string filename, int t_id, Partitioner &partitioner, int sf){
+DataCompressor::DataCompressor(string filename, int t_id, int aggCol, Partitioner &partitioner, int sf){
     table_meta *t_meta = &(this->t.t_meta);
     t_meta->path = filename;
     t_meta->t_id = t_id;
     t_meta->num_of_parts = partitioner.getMap().size();
+    t_meta->groupByColId = aggCol;
 
     this->partitioner = &partitioner;
     this->scale_factor = sf;
@@ -13,7 +14,7 @@ DataCompressor::DataCompressor(string filename, int t_id, Partitioner &partition
 
 DataCompressor::~DataCompressor(){
     for(int i = 0; i < t.t_meta.num_of_columns; i++){
-        if(t.t_meta.t_id == 0 && (i == 2 || i == 5)) //Skip foreign keys in the fact table
+        if(t.t_meta.t_id == 0 && (i == 2 || i == 4)) //Skip foreign keys in the fact table
 	    continue;
         switch(t.columns[i].c_meta.data_type){
             case data_type_t::INT:
@@ -48,11 +49,7 @@ DataCompressor::~DataCompressor(){
 	delete[] t.columns[i].compressed;
     }
     delete[] t.columns;
-    t.t_meta.keyMap.clear();
     delete[] distinct_keys;
-//    free(filter_vector);
-    free(join_vector1);
-    free(join_vector2);
 }
 
 void DataCompressor::initTable(){
@@ -63,7 +60,7 @@ void DataCompressor::initTable(){
     int all_parts = t_meta->num_of_columns * t_meta->num_of_parts;
     t.columns = new column[all_parts];
 
-    printf("\nCols: %d, Els %d, Psize: %d\n", t_meta->num_of_columns, t_meta->num_of_lines, t_meta->num_of_parts);    
+    //printf("\nCols: %d, Els %d, Psize: %d\n", t_meta->num_of_columns, t_meta->num_of_lines, t_meta->num_of_parts);    
 }
 
 void DataCompressor::createTableMeta(){
@@ -99,18 +96,18 @@ void DataCompressor::createTableMeta(){
     schema->clear();
 }
 
-void DataCompressor::parseFactTable(column *datePKCol, column *custPKCol){
+void DataCompressor::parseFactTable(column *suppPKCol, column *custPKCol){
     printf("Parsing the lineorder table...\n"); 
-    int dateKeyId = 5;
+    int suppKeyId = 4;
     int custKeyId = 2;
 
-    column *dateFKCol = &t.columns[dateKeyId];
+    column *suppFKCol = &t.columns[suppKeyId];
     column *custFKCol = &t.columns[custKeyId];
 
-    for(auto &curPair : datePKCol->i_keys)
-       dateFKCol->i_keys.insert(curPair);
-    distinct_keys[dateKeyId] = dateFKCol->i_keys.size();
-    dateFKCol->encoder = datePKCol->encoder;
+    for(auto &curPair : suppPKCol->i_keys)
+       suppFKCol->i_keys.insert(curPair);
+    distinct_keys[suppKeyId] = suppFKCol->i_keys.size();
+    suppFKCol->encoder = suppPKCol->encoder;
 
     for(auto &curPair : custPKCol->i_keys)
        custFKCol->i_keys.insert(curPair);
@@ -119,7 +116,7 @@ void DataCompressor::parseFactTable(column *datePKCol, column *custPKCol){
 
     ifstream file;
     string  buff;
-    int line = 0;
+    uint32_t line = 0;
     int value;
     float d_value;
     vector<string> exploded;
@@ -180,38 +177,12 @@ void DataCompressor::parseFactTable(column *datePKCol, column *custPKCol){
 
     t_meta->num_of_segments = (t_meta->num_of_parts) * partitioner->getSegsPerPart();
     //t.num_of_segments += ceil((partitioner->getPartitionSize(this->num_of_parts - 1)) / 64.0);
-
-    //posix_memalign(&filter_vector, 4096, t_meta->num_of_segments * 8);
-    posix_memalign(&join_vector1, 4096, t_meta->num_of_segments * 8);
-    posix_memalign(&join_vector2, 4096, t_meta->num_of_segments * 8);
-   
-
-    //Create key map for efficient aggregation
-    //Q1 has col[8] and col[9] as keys
-    if(t_meta->t_id == 0){ //for lineitem table
-	    uint32_t curKey;
-	    auto it1 = t.columns[8].keys.begin();
-	    auto it2 = t.columns[9].keys.begin();
-	    while(it1 != t.columns[8].keys.end()){
-		curKey = it1->second;
-		curKey = (curKey << 16) | it2->second;
-
-		if(t_meta->keyMap.find(curKey) == t_meta->keyMap.end())
-		    t_meta->keyMap.emplace(curKey, t_meta->keyMap.size());
-		it1++;
-		it2++;
-	    }
-	    uint32_t final_key = 65536; 
-	    t_meta->keyMap.emplace(final_key, t_meta->keyMap.size());
-
-	    for(auto &curr : t_meta->keyMap)
-		t_meta->reversedMap.emplace(curr.second, curr.first);
-    }
 }
+
 void DataCompressor::parseData(){
     ifstream file;
     string  buff;
-    int line = 0;
+    uint32_t line = 0;
     int value;
     float d_value;
     vector<string> exploded;
@@ -271,38 +242,13 @@ void DataCompressor::parseData(){
 
     t_meta->num_of_segments = (t_meta->num_of_parts) * partitioner->getSegsPerPart();
     //t.num_of_segments += ceil((partitioner->getPartitionSize(this->num_of_parts - 1)) / 64.0);
-
-    //posix_memalign(&filter_vector, 4096, t_meta->num_of_segments * 8);
-    posix_memalign(&join_vector1, 4096, t_meta->num_of_segments * 8);
-    posix_memalign(&join_vector2, 4096, t_meta->num_of_segments * 8);
-
-    //Create key map for efficient aggregation
-    //Q1 has col[8] and col[9] as keys
-    if(t_meta->t_id == 0){ //for lineitem table
-	    uint32_t curKey;
-	    auto it1 = t.columns[8].keys.begin();
-	    auto it2 = t.columns[9].keys.begin();
-	    while(it1 != t.columns[8].keys.end()){
-		curKey = it1->second;
-		curKey = (curKey << 16) | it2->second;
-
-		if(t_meta->keyMap.find(curKey) == t_meta->keyMap.end())
-		    t_meta->keyMap.emplace(curKey, t_meta->keyMap.size());
-		it1++;
-		it2++;
-	    }
-	    uint32_t final_key = 65536; 
-	    t_meta->keyMap.emplace(final_key, t_meta->keyMap.size());
-
-	    for(auto &curr : t_meta->keyMap)
-		t_meta->reversedMap.emplace(curr.second, curr.first);
-    }
 }
 
 void DataCompressor::createEncoders(){
     column *cur_col;
     column_meta *c_meta;
 
+    //t.t_meta.groupByColId
     for(int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts; col++){
 	int actual_col = col % t.t_meta.num_of_columns;
 	int part_id = col / t.t_meta.num_of_columns;
@@ -328,25 +274,50 @@ void DataCompressor::createEncoders(){
 	int curInd = 0;
 
 	for(auto &curPair : cur_col->i_pairs){
-		cur_col->data[curInd++] = t.columns[actual_col].i_keys[curPair.first];  //Each partition's data should start from index 0
+	    //Each partition's data should start from index 0
+	    cur_col->data[curInd++] = t.columns[actual_col].i_keys[curPair.first];  
 	}
 	for(auto &curPair : cur_col->d_pairs){
-		cur_col->data[curInd++] = t.columns[actual_col].d_keys[curPair.first];
+	    cur_col->data[curInd++] = t.columns[actual_col].d_keys[curPair.first];
 	}
 	for(auto &curPair : cur_col->str_pairs){
-		cur_col->data[curInd++] = t.columns[actual_col].keys[curPair.first];
+	    cur_col->data[curInd++] = t.columns[actual_col].keys[curPair.first];
 	}
     }
+
+    if(t.t_meta.groupByColId < 0)
+        return;
+
+    column* pk_col;
+    column* agg_col;
+    int total_cols = t.t_meta.num_of_columns * t.t_meta.num_of_parts;
+    for(int col = t.t_meta.groupByColId; col < total_cols; col = col + t.t_meta.num_of_columns){
+        pk_col = &(t.columns[col - t.t_meta.groupByColId]);
+        agg_col = &(t.columns[col]);
+	int colSize = agg_col->c_meta.col_size;
+	for(int ind = 0; ind < colSize; ind++){
+	    t.t_meta.groupByMap[pk_col->data[ind]] = agg_col->data[ind];
+	}
+    }
+
+    /*
+    if(t.t_meta.t_id == 2){
+	printf("\n");
+        for(auto &curPair : t.columns[t.t_meta.groupByColId].encoder.dict){
+	    printf("%d -> %s\n", curPair.first, curPair.second.c_str());
+	}	
+    }
+    */
 }
 
 void DataCompressor::createDictionaries(){
     for(int col = 0; col < t.t_meta.num_of_columns; col++){
-	    if(t.t_meta.t_id == 0 && (col == 2 || col == 5))
+	    if(t.t_meta.t_id == 0 && (col == 2 || col == 4))
 	        continue;
 
 	    int index = 0;
 	    if(t.columns[col].i_keys.size() > 0)
-	    	t.columns[col].encoder.i_dict = new int[distinct_keys[col]];
+	    	t.columns[col].encoder.i_dict = new uint32_t[distinct_keys[col]];
 	    else if(t.columns[col].d_keys.size() > 0)
 	    	t.columns[col].encoder.d_dict = new double[distinct_keys[col]];
 	    for(auto curPair : t.columns[col].i_keys){
@@ -486,7 +457,7 @@ void DataCompressor::calculateBitSizes(){
         if(t.columns[col].encoder.num_of_bits != -1)
             continue;
 	actual_col = col % t.t_meta.num_of_columns;
-	if(t.t_meta.t_id == 0 && (col == 2 || col == 5))
+	if(t.t_meta.t_id == 0 && (col == 2 || col == 4))
 	    continue;
 	count = distinct_keys[actual_col];
 	if(count == 1)

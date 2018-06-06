@@ -13,8 +13,6 @@
 #include "network/server/TCPAcceptor.h"
 #include "log/Result.h"
 
-#include "bench/vldb2018/tpch/Query3.h"
-
 #ifdef __sun 
 #include <sys/processor.h>
 #include <sys/procset.h>

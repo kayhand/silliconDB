@@ -22,16 +22,21 @@ class ScanApi {
         table *baseTable;
 	int colId; //column id to scan
 
+        int num_of_parts;
+	int num_of_segments;
+	int blockSize;
+
 	uint64_t comp_predicate;
 	dax_compare_t cmp;
 
 	void *filter_vector;
-	int num_of_segments;
 
         dax_int_t predicate;
         dax_vec_t src;
 	dax_vec_t dst;
 	uint64_t flag;
+
+	atomic<int> partsDone;
 
 	void reserveBitVector(int block_size){
             posix_memalign(&filter_vector, 4096, block_size);	
@@ -41,11 +46,14 @@ class ScanApi {
 	    return static_cast<uint64_t*> (filter_vector) + offset;
 	}
 
+	friend class JoinApi;
+
     public:
         ScanApi(DataCompressor *dataComp, int selCol){
 	    this->baseTable = dataComp->getTable();
 	    this->colId = selCol;
 	    this->num_of_segments = dataComp->getPartitioner()->getSegsPerPart();
+	    this->blockSize = baseTable->t_meta.num_of_segments * 8;
 
 	    initializeScan();
 	}
@@ -54,15 +62,28 @@ class ScanApi {
 	    free(filter_vector);
 	}
 
+	int totalParts(){
+	    return num_of_parts;
+	}
+
+	bool isCompleted(){
+	    return partsDone == num_of_parts; 
+	}
+
+	void incrementCounter(){
+	    partsDone++;
+	}
+
 	void initializeScan(){
+            this->num_of_parts = baseTable->t_meta.num_of_parts;
+
 	    int t_id = baseTable->t_meta.t_id;
-	    printf("t_id: %d\n", t_id);
             if(t_id == 0){ //lo
 	        comp_predicate = baseTable->columns[colId].i_keys[25]; //lo_quantity
 	        cmp = dax_compare_t::DAX_LE;
 	    }
-	    else if(t_id == 1){ //date
-	        comp_predicate = baseTable->columns[colId].i_keys[1993]; //d_year
+	    else if(t_id == 1){ //supplier
+	        comp_predicate = baseTable->columns[colId].keys["ASIA"]; //s_region
 	        cmp = dax_compare_t::DAX_EQ;
 	    }
 	    else if(t_id == 2){ //customer
@@ -70,7 +91,7 @@ class ScanApi {
 	        cmp = dax_compare_t::DAX_EQ;
 	    }
 
-	    reserveBitVector(baseTable->t_meta.num_of_segments * 8);
+	    reserveBitVector(blockSize);
 	    initDaxVectors();
 	}
 
@@ -93,6 +114,24 @@ class ScanApi {
 
 	    flag = DAX_CACHE_DST;
 	}
+	
+	int bitVectorBlockSize(){
+	    return this->blockSize;
+	}
+
+	table* getBaseTable(){
+	    return this->baseTable;    
+	}
+
+	void* getBitResult(){
+	    return getFilterBitVector(0);
+	    //return this->filter_vector;
+	}
+
+	int getSegmentsPerPartition(){
+	    return this->num_of_segments;
+	}
+
 
 	#ifdef __sun 
 	void hwScan(dax_queue_t**, Node<Query>*);

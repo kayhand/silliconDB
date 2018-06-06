@@ -11,9 +11,10 @@
 #include "exec/util/WorkQueue.h"
 #include "network/server/TCPAcceptor.h"
 #include "log/Result.h"
-#include "api/ScanApi.h"
 
-#include "bench/vldb2018/tpch/Query3.h"
+#include "api/ScanApi.h"
+#include "api/JoinApi.h"
+#include "api/AggApi.h"
 
 #ifdef __sun 
 #include <sys/processor.h>
@@ -39,6 +40,17 @@ class ThreadHandler : public Thread<T>{
 	EXEC_TYPE eType;
 
 	std::vector<ScanApi*> scanAPIs;
+	std::vector<JoinApi*> joinAPIs;
+	std::vector<AggApi*> aggAPIs;
+
+	ScanApi *api_ls;
+	ScanApi *api_ss;
+	ScanApi *api_cs;
+
+	JoinApi *j1_lc;
+	JoinApi *j2_ls;
+
+	AggApi *api_agg;
 
 	virtual void startExec(WorkQueue<T> *work_queue) = 0;
 
@@ -80,8 +92,19 @@ class ThreadHandler : public Thread<T>{
 	    this->hw_queue = hw_queue;
 	}
 
-	void setScanAPIs(std::vector<ScanApi*> &scanAPIs){
+	void setAPIs(std::vector<ScanApi*> &scanAPIs, std::vector<JoinApi*> &joinAPIs, std::vector<AggApi*> &aggAPIs){
 	    this->scanAPIs = scanAPIs;
+	    this->joinAPIs = joinAPIs;
+	    this->aggAPIs = aggAPIs;
+	   
+	    api_ls = this->scanAPIs[0];
+	    api_ss = this->scanAPIs[1];
+	    api_cs = this->scanAPIs[2];
+
+	    j1_lc = this->joinAPIs[0];
+    	    j2_ls = this->joinAPIs[1];
+
+	    api_agg = this->aggAPIs[0];
 	}
 
 };

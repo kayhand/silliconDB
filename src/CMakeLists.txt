@@ -1,5 +1,5 @@
 add_subdirectory(api)
-add_subdirectory(bench)
+#add_subdirectory(bench)
 add_subdirectory(data)
 add_subdirectory(exec)
 add_subdirectory(network)

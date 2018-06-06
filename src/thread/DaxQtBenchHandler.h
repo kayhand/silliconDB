@@ -15,10 +15,6 @@
 #include "network/server/TCPAcceptor.h"
 #include "log/Result.h"
 
-#include "bench/vldb2018/qt/SDBApi.h"
-#include "bench/vldb2018/qt/SDBAndApi.h"
-#include "bench/vldb2018/qt/SDBJoinApi.h"
-
 #ifdef __sun 
 #include <sys/processor.h>
 #include <sys/procset.h>
@@ -41,55 +37,26 @@ class DaxQtBenchHandler : public ThreadHandler<T>{
 	int items_done = q_size;
 	Node<T> *node_item;
 
-	ScanApi *api_ls = this->scanAPIs[0];
-	ScanApi *api_ds = this->scanAPIs[1];
-	ScanApi *api_cs = this->scanAPIs[2];
-
-        //ScanApi api_ls(this->dataVector[0], 8);
-        //ScanApi api_ds(this->dataVector[1], 4);
-        //ScanApi api_cs(this->dataVector[2], 5);
-
-	//SDBApi api_ls(this->dataVector[0], 8);
-	//api_ls.initialize();
-	
-	//SDBApi api_ds(this->dataVector[1], 4);
-	//api_ds.initialize();
-	
-	//SDBApi api_cs(this->dataVector[2], 5);
-	//api_cs.initialize();
-
-	SDBJoinApi j1_api(this->dataVector[0], this->dataVector[2], 2); 
-	j1_api.initDaxVectors();
-
-	SDBJoinApi j2_api(this->dataVector[0], this->dataVector[1], 5); 
-	j2_api.initDaxVectors();
-
-	SDBAndApi and_api(this->dataVector[0], this->dataVector[2], 5);
-	and_api.initDaxVectors();
-
         while(work_queue->getHead() != work_queue->getTail()){
 	    for(int i = 0; i < items_done; i++){
                 if(work_queue->getHead() != work_queue->getTail()){
                     node_item = work_queue->remove_ref_dax();
 		    if(node_item == NULL)
-		        break;
+		        continue;
 		    else if(node_item->value.getTableId() == 0){
-	                api_ls->hwScan(&dax_queue, node_item);
+	                this->api_ls->hwScan(&dax_queue, node_item);
 		    }
 		    else if(node_item->value.getTableId() == 1){
-	                api_ds->hwScan(&dax_queue, node_item);
+	                this->api_ss->hwScan(&dax_queue, node_item);
 		    }
 		    else if(node_item->value.getTableId() == 2){
-	                api_cs->hwScan(&dax_queue, node_item);
+	                this->api_cs->hwScan(&dax_queue, node_item);
 		    }
 		    else if(node_item->value.getTableId() == 11){
-	                j1_api.hwJoin(&dax_queue, node_item);
-		    }
-		    else if(node_item->value.getTableId() == 21){
-		        and_api.hwAnd(&dax_queue, node_item);
+	                this->j1_lc->hwJoin(&dax_queue, node_item);
 		    }
 		    else if(node_item->value.getTableId() == 12){
-	                j2_api.hwJoin(&dax_queue, node_item);
+	                this->j2_ls->hwJoin(&dax_queue, node_item);
 		    }
 		}
 	    }
@@ -99,8 +66,23 @@ class DaxQtBenchHandler : public ThreadHandler<T>{
             if(items_done > 0){
                 handlePollReturn(items_done, poll_data);
             }
+	    /*else{
+	        if(work_queue->getHead() == work_queue->getTail()){
+		    //printf("Busy polling...\n");
+		    items_done = 0;
+		    while(items_done != dax_status_t::DAX_EQEMPTY){ // busy polling
+		        dax_poll_t poll_data[q_size];
+		        items_done = dax_poll(dax_queue, poll_data, 1, -1);
+		        if(items_done > 0){
+		    	    handlePollReturn(items_done, poll_data);           
+		        }
+		    }
+		    items_done = q_size;
+		}
+	    }*/
         }
 
+        //work_queue->printQueue();
         items_done = 0;
         while(items_done != dax_status_t::DAX_EQEMPTY){ // busy polling
             dax_poll_t poll_data[q_size];
@@ -109,27 +91,9 @@ class DaxQtBenchHandler : public ThreadHandler<T>{
                 handlePollReturn(items_done, poll_data);           
 	    }
         }
-        //printf("DAX DONE! (%d), %d\n", items_done, (int) this->daxDone);
+  
+        printf("DAX DONE! (%d), %d\n", items_done, (int) this->daxDone);
 
-/*	
-        DataCompressor *leftComp = this->dataVector[1];
-        int num_of_segments = leftComp->getTable()->t_meta.num_of_segments; 
-        uint64_t *bit_vector = (uint64_t*) (leftComp->getFilterBitVector(0));
-	for(int seg_id = 0; seg_id < 2; seg_id++){
-	    uint64_t cur_vector = bit_vector[seg_id];
-	    printf("%d: ", seg_id);
-	    for(int i = 0; i < 64; i++){
-	        int val = cur_vector & 1;
-		cur_vector = cur_vector >> 1;
-		if(val == 1){
-		    int index = seg_id * 63 + (64 - i);
-		    printf("%d - ", index);
-		}
-	    }
-	    printf("\n");
-	}
-	printf("Num of segments: %d\n", num_of_segments);
-*/
     }
 
     public:
@@ -143,12 +107,12 @@ class DaxQtBenchHandler : public ThreadHandler<T>{
         void *run(){
             createDaxContext();
             this->thr_sync->waitOnStartBarrier();
-
             this->startExec(this->shared_queue);
-
+	    printf("Dax is done...\n");
             this->thr_sync->waitOnAggBarrier();
             this->thr_sync->waitOnEndBarrier();
 
+            //this->and_lcd->printResultVector(10); 
             this->t_stream->send("", 0);
             return NULL;
         }
@@ -160,12 +124,11 @@ class DaxQtBenchHandler : public ThreadHandler<T>{
             if(res != 0)
                 printf("Problem with DAX Context Creation! Return code is %d.\n", res);
 
-            printf("Qsize: %d\n", q_size);
             res = dax_queue_create(ctx, q_size, &dax_queue);
             if(res != 0)
                 printf("Problem with DAX Queue Creation! Return code is %d.\n", res);
 
-            res = dax_set_log_file(ctx, DAX_LOG_RETURN, lFile);
+            res = dax_set_log_file(ctx, DAX_LOG_VERBOSE, lFile);
             if(res != 0)
                 printf("Problem with DAX Logger Creation! Return code is %d.\n", res);
 
@@ -178,42 +141,71 @@ class DaxQtBenchHandler : public ThreadHandler<T>{
         inline void handlePollReturn(int items_done, dax_poll_t *poll_data){
             Node<T> *node_item;
 	    int t_id;
+	    int p_id;
             for(int i = 0; i < items_done; i++){
 	        q_udata *post_data = (q_udata*) (poll_data[i].udata);
                 node_item = (Node<T> *) (post_data->node_ptr);
 
                 //this->result.addRuntime(DAX_SCAN, make_tuple(node_item->t_start, ts));
                 t_id = node_item->value.getTableId();
-		if(t_id == 0 || t_id == 1 || t_id == 2)
-		    this->result.addRuntime(DAX_SCAN, make_tuple(post_data->t_start, gethrtime()));
+                p_id = node_item->value.getPart();
+		if(t_id == 0 || t_id == 1 || t_id == 2){
+		    this->result.addRuntime(DAX_SCAN, make_tuple(post_data->t_start, gethrtime(), t_id, p_id));
+		}
 
-		if(t_id == 11)
+		if(t_id == 11){
+		    this->result.addRuntime(DAX_JOIN, make_tuple(post_data->t_start, gethrtime(), t_id, p_id));
 		    this->result.addCountResult(make_tuple(poll_data[i].count, 3));
+		    this->j1_lc->setExecFlag(p_id);
+
+		    /*if(p_id == 45 || p_id == 46){
+		        printf("Printing join result for part %d ...\n", p_id);
+		    	uint64_t * result_vector = (uint64_t *) this->j1_lc->getJoinBitVector(p_id);
+		        this->j1_lc->printBitVector(result_vector[6], 7);
+		    }*/
+		}
 		else if(t_id == 12){
 		    this->result.addCountResult(make_tuple(poll_data[i].count, 4));
-		    printf("lo-date join DONE! (%lu)\n", poll_data[i].count);
+		    this->j2_ls->setExecFlag(p_id);
 		}
 		else
 		    this->result.addCountResult(make_tuple(poll_data[i].count, t_id));
 
                 this->putFreeNode(node_item);
-/*		if(t_id == 2)
-		    printf("customer scan DONE!\n");
-		else if(t_id == 1)
-		    printf("date scan DONE!\n");
-		else if(t_id == 0){
-		    printf("lo scan DONE!\n");
-		    //this->addNewJob(0, node_item->value.getPart(), 11, work_queue);
-		}
-		else if(t_id == 11){
-		    printf("lo-customer join DONE!\n");
-		    //this->addNewJob(0, node_item->value.getPart(), 12, work_queue);
-		    //this->addNewJob(0, node_item->value.getPart(), 21, work_queue);
-		    //and bit_vector results
-		}*/
-		printf("Dax Count: %lu for part: %d\n", poll_data[i].count, node_item->value.getPart());
 
-            }
+	        if(t_id == 0){
+		    //schedule joins: lineorder-customer, lineorder-order
+		    this->api_ls->incrementCounter();
+		    //this->addNewJob(0, node_item->value.getPart(), 12, this->sw_queue); 
+		    this->addNewJob(0, node_item->value.getPart(), 11, this->work_queue); 
+		    this->addNewJob(0, node_item->value.getPart(), 12, this->work_queue); 
+		    //printf("Dax Count (scan): ");
+		}
+		else if(t_id == 1){
+		    this->api_ss->incrementCounter();
+		}
+		else if(t_id == 2){
+		    this->api_cs->incrementCounter();
+		}
+		else if (t_id == 11){
+		    //printf("Dax Count (join1): ");
+		    this->addNewJob(0, node_item->value.getPart(), 21, this->sw_queue); 
+		}
+		else if(t_id == 12){
+		    //schedule and operation
+		    //printf("Dax Count (join2): ");
+		}
+		/*
+		else if(t_id == 11){
+		    printf("Dax Count (lc. join): ");
+		}
+		else if(t_id == 12){
+		    printf("Dax Count (ld. join): ");
+		}
+		*/
+		//printf("%lu for part: %d\n", poll_data[i].count, node_item->value.getPart());
+                
+	    }
         } 
 
         void setHWQueue(WorkQueue<T> *queue){

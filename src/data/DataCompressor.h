@@ -35,8 +35,8 @@ struct column_meta{
 
     int column_id = -1;
 
-    int start = 0;
-    int end = 0;
+    uint32_t start = 0;
+    uint32_t end = 0;
     int col_size = 0;
 
     //Bitweaving style layout information
@@ -50,7 +50,7 @@ struct column_encoder{
 
     //Compressed to decompressed values
     unordered_map<uint32_t, string> dict;
-    int* i_dict;
+    uint32_t* i_dict;
     double* d_dict; 
 };
 
@@ -66,15 +66,16 @@ struct column{
     map<double, uint32_t> d_keys;
 
     //Position (line index) of each value in the original file
-    vector<pair<int, int>> i_pairs;
-    vector<pair<double, int>> d_pairs;
-    vector<pair<string, int>> str_pairs;
+    vector<pair<int, uint32_t>> i_pairs;
+    vector<pair<double, uint32_t>> d_pairs;
+    vector<pair<string, uint32_t>> str_pairs;
  
     int index_mapping[64];
 };
 
 struct table_meta{
     int t_id;
+    int groupByColId; //customer (c_nation): 4, date(d_year): 4
 
     int num_of_columns;
     int num_of_lines;
@@ -85,8 +86,7 @@ struct table_meta{
     
     string path;
 
-    unordered_map<uint32_t, int> keyMap; //For aggregation keys use a mapping for each key to avoid concat costs
-    unordered_map<int, uint32_t> reversedMap; 
+    unordered_map<uint32_t, uint32_t> groupByMap; //pk to compressed_val
 };
 
 struct table{
@@ -100,16 +100,13 @@ class DataCompressor{
     	Partitioner *partitioner;
 
 	int* distinct_keys;
-	void* filter_vector;
-	void* join_vector1;
-	void* join_vector2;
 	int scale_factor = 1;
 
 	void cleanUp();
 	void initTable();
 
     public:
-    	DataCompressor(string filename, int t_id, Partitioner &partitioner, int sf);
+    	DataCompressor(string filename, int t_id, int g_id, Partitioner &partitioner, int sf);
 
 	//Copy constructor
 	DataCompressor(const DataCompressor& source);
@@ -145,18 +142,6 @@ class DataCompressor{
 		return partitioner;
 	}
 
-	void* getFilterBitVector(int offset){
-	    return static_cast<uint64_t *> (filter_vector) + offset;
-	}
-
-	void* getJoinBitVector1(int offset){
-	    return static_cast<uint64_t *> (join_vector1) + offset;
-	}
-
-	void* getJoinBitVector2(int offset){
-	    return static_cast<uint64_t *> (join_vector2) + offset;
-	}
-	
 	int getNumOfParts(){
 	    return t.t_meta.num_of_parts;
 	}
