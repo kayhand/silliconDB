@@ -10,8 +10,8 @@
 
 #include "thread/Thread.h"
 #include "thread/ThreadHandler.h"
-#include "thread/CoreQtBenchHandler.h"
-#include "thread/DaxQtBenchHandler.h"
+#include "thread/CoreHandler.h"
+#include "thread/DaxHandler.h"
 
 #include "util/Query.h"
 #include "data/DataCompressor.h"
@@ -23,10 +23,8 @@
 #include "api/AggApi.h"
 
 class ProcessingUnit{
-    std::vector<CoreQtBenchHandler<Query>*> coreHandlers;
-    #ifdef __sun 
-        std::vector<DaxQtBenchHandler<Query>*> daxHandlers;
-    #endif
+    std::vector<CoreHandler<Query>*> coreHandlers;
+    std::vector<DaxHandler<Query>*> daxHandlers;
 
     int numOfComputeUnits;
 
