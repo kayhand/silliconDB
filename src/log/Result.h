@@ -8,7 +8,13 @@ typedef long long unsigned int timestamp;
 typedef std::tuple<timestamp, timestamp> time_pair;
 typedef std::tuple<timestamp, timestamp, int, int> time_tuple;
 
-enum JobType{SW_SCAN, DAX_SCAN, SW_AND, AGG, AGG_RES, COUNT, COUNT_RES, SW_JOIN, DAX_JOIN, JOIN_RES};
+enum JobType
+{
+	SW_SCAN, DAX_SCAN,
+	SW_JOIN, DAX_JOIN,
+	AGG, AGG_RES,
+	COUNT_RES, JOIN_RES
+};
 
 class Result {
     public:
@@ -52,10 +58,6 @@ class Result {
 	        for(time_tuple curr : agg_runtimes)
 	    	    fprintf(f_pointer, "SW Agg(%d,%d) %llu %llu %llu\n", get<2>(curr), get<3>(curr), get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
 	    }
-	    else if(j_type == COUNT){
-	        for(time_tuple curr : count_runtimes)
-	    	    fprintf(f_pointer, "SW Count %llu %llu %llu\n", get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
-	    }
 	    else if(j_type == DAX_JOIN){
 	        for(time_tuple curr : dax_join_runtimes)
 	    	    fprintf(f_pointer, "DAX Join(%d,%d) %llu %llu %llu\n", get<2>(curr), get<3>(curr), get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
@@ -73,7 +75,7 @@ class Result {
 	}
 
 	template <typename Key, typename Value> 
-	void writeAggResults(unordered_map<Key, Value> &agg_result_f){
+	void writeAggResults(map<Key, Value> &agg_result_f){
 	    for(auto val : agg_result){
 	        Key key = get<0>(val);
 	        agg_result_f[key] += get<1>(val);
@@ -88,6 +90,14 @@ class Result {
 	    }
 	}
 
+	void writeCountResults(unordered_map<int, int> &count_result_f){
+	    int job_id;
+	    for(auto val : count_result){
+	        job_id = get<1>(val);
+	        count_result_f[job_id] += get<0>(val);
+	    }
+	}
+
 	void addRuntime(JobType j_type, time_tuple t_pair){
 	    if(j_type == SW_SCAN){
 	    	sw_scan_runtimes.push_back(t_pair);	
@@ -97,9 +107,6 @@ class Result {
 	    }
 	    else if(j_type == AGG){
 	    	agg_runtimes.push_back(t_pair);	
-	    }	
-	    else if(j_type == COUNT){
-	    	count_runtimes.push_back(t_pair);	
 	    }	
 	    else if(j_type == SW_JOIN){
 	    	sw_join_runtimes.push_back(t_pair);	
@@ -132,7 +139,8 @@ class Result {
 	std::vector<time_tuple> sw_join_runtimes;
 	std::vector<time_tuple> dax_join_runtimes;
 
-	std::vector<tuple<string, uint64_t>> agg_result;
+	//std::vector<tuple<string, uint64_t>> agg_result;
+	std::vector<tuple<int, uint64_t>> agg_result;
 	std::vector<tuple<int, int>> count_result;
 	std::vector<int> join_result;
 };

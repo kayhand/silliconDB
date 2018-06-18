@@ -4,7 +4,7 @@ project (SILLICONDB)
 message(${SILLICONDB_SOURCE_DIR})
 message(${SILLICONDB_BINARY_DIR})
 
-set (CMAKE_CXX_FLAGS "-g -O3 -std=c++1y")
+set (CMAKE_CXX_FLAGS " -O3 -std=c++1y")
 set (CMAKE_ARCHITECTURE_FLAGS "-m64 -mcpu=ultrasparc3 -mvis2")
 
 INCLUDE_DIRECTORIES(/usr/lib/sparcv9)
