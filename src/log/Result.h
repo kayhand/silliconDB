@@ -8,141 +8,117 @@ typedef long long unsigned int timestamp;
 typedef std::tuple<timestamp, timestamp> time_pair;
 typedef std::tuple<timestamp, timestamp, int, int> time_tuple;
 
-enum JobType
-{
-	SW_SCAN, DAX_SCAN,
-	SW_JOIN, DAX_JOIN,
-	AGG, AGG_RES,
-	COUNT_RES, JOIN_RES
-};
-
 class Result {
-    public:
-        Result(){
-	    reserveResources();
-	};		
-        ~Result(){
-	    sw_scan_runtimes.clear();
-	    dax_scan_runtimes.clear();
-	    agg_runtimes.clear();
-	    count_runtimes.clear();
-	    sw_join_runtimes.clear();
-	    dax_join_runtimes.clear();
-	}   
-	
-	void reserveResources(){
-	    sw_scan_runtimes.reserve(50);
-	    dax_scan_runtimes.reserve(50);
-	    
-	    agg_runtimes.reserve(50);
-	    agg_result.reserve(200);
+public:
+	Result() {
+		printf("Hello!\n");
+	};
+	~Result() {}
 
-	    count_runtimes.reserve(50);
-	    count_result.reserve(200);
-
-	    dax_join_runtimes.reserve(50);
-	    sw_join_runtimes.reserve(50);
-	    join_result.reserve(200);
+	void addRuntime(bool isDax, JOB_TYPE j_type, time_tuple t_pair) {
+		if (j_type <= P_SCAN) {
+			if (isDax)
+				dax_scan_runtimes.push_back(t_pair);
+			else
+				sw_scan_runtimes.push_back(t_pair);
+		} else if (j_type <= LD_JOIN) {
+			if (isDax)
+				dax_join_runtimes.push_back(t_pair);
+			else
+				sw_join_runtimes.push_back(t_pair);
+		} else if (j_type == AGG)
+			agg_runtimes.push_back(t_pair);
 	}
 
-	void writeResults(JobType j_type, FILE *f_pointer){
-	    if(j_type == SW_SCAN){
-	        for(time_tuple curr : sw_scan_runtimes)
-	    	    fprintf(f_pointer, "SW Scan(%d,%d) %llu %llu %llu\n", get<2>(curr), get<3>(curr), get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
-	    }
-	    else if(j_type == DAX_SCAN){
-	        for(time_tuple curr : dax_scan_runtimes)
-	    	    fprintf(f_pointer, "DAX Scan(%d,%d) %llu %llu %llu\n", get<2>(curr), get<3>(curr), get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
-	    }
-	    else if(j_type == AGG){
-	        for(time_tuple curr : agg_runtimes)
-	    	    fprintf(f_pointer, "SW Agg(%d,%d) %llu %llu %llu\n", get<2>(curr), get<3>(curr), get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
-	    }
-	    else if(j_type == DAX_JOIN){
-	        for(time_tuple curr : dax_join_runtimes)
-	    	    fprintf(f_pointer, "DAX Join(%d,%d) %llu %llu %llu\n", get<2>(curr), get<3>(curr), get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
-	    }
-	    else if(j_type == SW_JOIN){
-	        for(time_tuple curr : sw_join_runtimes)
-	    	    fprintf(f_pointer, "SW Join(%d,%d) %llu %llu %llu\n", get<2>(curr), get<3>(curr), get<0>(curr), get<1>(curr), get<1>(curr) - get<0>(curr));
-	    }
-
+	//T tuple: <int, JOB_TYPE>
+	template<typename T>
+	void addCountResult(T tuple) {
+		job_counts.push_back(tuple);
 	}
 
-	template <typename T> 
-	void addAggResult(T tuple){
-   	    agg_result.push_back(tuple);
+	//T tuple: <key_type, value_type>
+	template<typename T>
+	void addAggResult(T tuple) {
+		local_agg_results.push_back(tuple);
 	}
 
-	template <typename Key, typename Value> 
-	void writeAggResults(map<Key, Value> &agg_result_f){
-	    for(auto val : agg_result){
-	        Key key = get<0>(val);
-	        agg_result_f[key] += get<1>(val);
-	    }
+	void mergeCountResults(map<int, int> &count_results) {
+		int j_type;
+		for (auto val : job_counts) {
+			j_type = get<0>(val);
+			count_results[j_type] += get<1>(val);
+		}
 	}
 
-	void writeCountResults(vector<int> &count_result_f){
-	    int job_id;
-	    for(auto val : count_result){
-	        job_id = get<1>(val);
-	        count_result_f[job_id] += get<0>(val); 
-	    }
+	template<typename Key, typename Value>
+	void mergeAggResults(map<Key, Value> &merged_agg_results) {
+		for (auto val : local_agg_results) {
+			Key key = get < 0 > (val);
+			merged_agg_results[key] += get < 1 > (val);
+		}
 	}
 
-	void writeCountResults(unordered_map<int, int> &count_result_f){
-	    int job_id;
-	    for(auto val : count_result){
-	        job_id = get<1>(val);
-	        count_result_f[job_id] += get<0>(val);
-	    }
+	static void writeCountsToFile(map<int, int> &merged_counts){
+		FILE *file_ptr = fopen("count_result.txt", "a");
+
+		std::unordered_map<int, std::string> job_names {
+				{LO_SCAN, "lo_scan"}, {S_SCAN, "supp_scan"},
+				{C_SCAN, "cust_scan"}, {D_SCAN, "date_scan"}, {P_SCAN, "p_scan"},
+				{LC_JOIN, "lo_cust_join"}, {LS_JOIN, "lo_supp_join"}, {LD_JOIN, "lo_date_join"}
+		};
+
+		for(auto &res_pair : merged_counts){
+			fprintf(file_ptr, "%s: %d\n", (job_names[res_pair.first]).c_str(), res_pair.second);
+		}
+
+		fclose(file_ptr);
 	}
 
-	void addRuntime(JobType j_type, time_tuple t_pair){
-	    if(j_type == SW_SCAN){
-	    	sw_scan_runtimes.push_back(t_pair);	
-	    }
-	    else if(j_type == DAX_SCAN){
-	    	dax_scan_runtimes.push_back(t_pair);	
-	    }
-	    else if(j_type == AGG){
-	    	agg_runtimes.push_back(t_pair);	
-	    }	
-	    else if(j_type == SW_JOIN){
-	    	sw_join_runtimes.push_back(t_pair);	
-	    }	
-	    else if(j_type == DAX_JOIN){
-	    	dax_join_runtimes.push_back(t_pair);	
-	    }	
+	static void writeAggResultsToFile(map<int, uint64_t> &merged_agg_result){
+		FILE *file_ptr = fopen("agg_result.txt", "a");
+
+		for (auto &aggPair : merged_agg_result){
+			fprintf(file_ptr, "%d -> %lu\n", aggPair.first, aggPair.second);
+		}
+		fprintf(file_ptr, "\n");
+
+		fclose(file_ptr);
 	}
 
-	template <typename T> 
-	void addCountResult(T tuple){
-   	    count_result.push_back(tuple);
+	void writeRuntimeResultsToFile(std::unordered_map<std::string, FILE*> f_ptrs) {
+		FILE *file_ptr;
+		vector<time_tuple> *runtimes;
+
+		string job_name;
+		for (auto &curPair : f_ptrs) {
+			job_name = curPair.first;
+			runtimes = all_runtimes[job_name];
+
+			file_ptr = curPair.second;
+			time_tuple curr;
+			for(int id = 0; id < (int) runtimes->size(); id++){
+				curr = runtimes->at(id);
+				fprintf(file_ptr, "%s (%d,%d) %llu %llu %llu\n", job_name.c_str(),
+						get<2>(curr), get<3>(curr), get<0>(curr), get<1>(curr),
+						get<1>(curr) - get<0>(curr));
+			}
+		}
 	}
 
-	template <typename T> 
-	void addCountResultDax(T tuple){
-   	    count_result.push_back(tuple);
-	}
-
-	template <typename T> 
-	void addJoinResult(T tuple){
-   	    join_result.push_back(tuple);
-	}
-
-    private:
+private:
 	std::vector<time_tuple> sw_scan_runtimes;
 	std::vector<time_tuple> dax_scan_runtimes;
-	std::vector<time_tuple> agg_runtimes;
-	std::vector<time_tuple> count_runtimes;
 	std::vector<time_tuple> sw_join_runtimes;
 	std::vector<time_tuple> dax_join_runtimes;
+	std::vector<time_tuple> agg_runtimes;
 
-	//std::vector<tuple<string, uint64_t>> agg_result;
-	std::vector<tuple<int, uint64_t>> agg_result;
-	std::vector<tuple<int, int>> count_result;
-	std::vector<int> join_result;
+	std::unordered_map<std::string, std::vector<time_tuple>*> all_runtimes { {
+			"SW_SCAN", &sw_scan_runtimes }, { "DAX_SCAN", &dax_scan_runtimes },
+			{ "SW_JOIN", &sw_join_runtimes },
+			{ "DAX_JOIN", &dax_join_runtimes }, { "AGG", &agg_runtimes } };
+
+	std::vector<tuple<int, uint64_t>> local_agg_results;
+	std::vector<tuple<JOB_TYPE, int>> job_counts;
 };
 
 #endif

@@ -37,18 +37,21 @@ private:
 	dax_vec_t dst;
 	uint64_t flag;
 
+	JOB_TYPE j_type;
+
 	void reserveBitVector() {
 		this->block_size = factTable->t_meta.num_of_segments * 8;
-		posix_memalign(&join_vector, 4096, block_size);
+		posix_memalign(&join_vector, 64, block_size);
 	}
 
 	friend class AggApi;
 
 public:
-	JoinApi(table *factTable, ScanApi *dimScan, int joinColId) {
+	JoinApi(table *factTable, ScanApi *dimScan, int joinColId, JOB_TYPE j_type) {
 		this->factTable = factTable;
 		this->dimensionScan = dimScan;
 		this->joinColId = joinColId;
+		this->j_type = j_type;
 
 		this->num_of_columns = factTable->t_meta.num_of_columns;
 		this->segs_per_part = factTable->t_meta.num_of_segments / factTable->t_meta.num_of_parts;
@@ -140,6 +143,14 @@ public:
 
 		uint64_t localVector = bit_map[arr_ind];
 		return (localVector >> local_pos) & 1;
+	}
+
+	int JoinColId(){
+		return this->joinColId;
+	}
+
+	ScanApi* DimensionScan(){
+		return this->dimensionScan;
 	}
 
 };

@@ -24,14 +24,11 @@ void AggApi::agg(Node<Query>* node, Result *result) {
 	int rev_ind = rev_id + curPart * factTable->t_meta.num_of_columns;
 	column *lo_revenue = &(factTable->columns[rev_ind]);
 
-	int num_of_segs = lo_ckey->c_meta.num_of_segments;
+	int num_of_segs = lo_dkey->c_meta.num_of_segments;
 
 	uint64_t* bit_vector_j1 = (uint64_t *) joins[0]->getJoinBitVector(curPart);
 	uint64_t* bit_vector_j2 = (uint64_t *) joins[1]->getJoinBitVector(curPart);
 	uint64_t* bit_vector_j3 = (uint64_t *) joins[2]->getJoinBitVector(curPart);
-
-	uint32_t *lo_rev_comp = (uint32_t *) lo_revenue->data;
-	uint32_t lo_rev;
 
 	uint32_t *lo_ckey_comp = (uint32_t *) lo_ckey->data;
 	uint32_t c_nation;
@@ -42,6 +39,9 @@ void AggApi::agg(Node<Query>* node, Result *result) {
 	uint32_t *lo_dkey_comp = (uint32_t *) lo_dkey->data;
 	uint32_t d_year;
 
+	uint32_t *lo_rev_comp = (uint32_t *) lo_revenue->data;
+	uint32_t lo_rev;
+
 	unordered_map<uint32_t, uint32_t> *groupByMap_cust =
 			&(joins[0]->dimensionScan->getBaseTable()->t_meta.groupByMap);
 	unordered_map<uint32_t, uint32_t> *groupByMap_supp =
@@ -50,17 +50,9 @@ void AggApi::agg(Node<Query>* node, Result *result) {
 				&(joins[2]->dimensionScan->getBaseTable()->t_meta.groupByMap);
 
 	std::map<uint32_t, uint64_t> local_agg;
-	/*std::map<uint32_t, uint64_t> local_agg { { 104, 0ul }, { 109, 0ul }, { 110,
-			0ul }, { 113, 0ul }, { 124, 0ul }, { 229, 0ul }, { 234, 0ul }, {
-			235, 0ul }, { 238, 0ul }, { 249, 0ul }, { 254, 0ul }, { 259, 0ul },
-			{ 260, 0ul }, { 263, 0ul }, { 274, 0ul }, { 329, 0ul },
-			{ 334, 0ul }, { 335, 0ul }, { 338, 0ul }, { 349, 0ul },
-			{ 604, 0ul }, { 609, 0ul }, { 610, 0ul }, { 613, 0ul }, { 624, 0ul },
-	};*/
-	//bool first = true;
-	//int s = lo_ckey->c_meta.start;
 
-	vector<int> keys = { 833, 834, 835, 836, 837, 838, 873, 874, 875, 876, 877,
+	//bool first = true;
+	/*vector<int> keys = { 833, 834, 835, 836, 837, 838, 873, 874, 875, 876, 877,
 			878, 881, 882, 883, 884, 885, 886, 905, 906, 907, 908, 909, 910,
 			993, 994, 995, 996, 997, 998, 1833, 1834, 1835, 1836, 1837, 1838,
 			1873, 1874, 1875, 1876, 1877, 1878, 1881, 1882, 1883, 1884, 1885,
@@ -73,15 +65,17 @@ void AggApi::agg(Node<Query>* node, Result *result) {
 			2710, 2793, 2794, 2795, 2796, 2797, 2798, 4833, 4834, 4835, 4836,
 			4837, 4838, 4873, 4874, 4875, 4876, 4877, 4878, 4881, 4882, 4883,
 			4884, 4885, 4886, 4905, 4906, 4907, 4908, 4909, 4910, 4993, 4994,
-			4995, 4996, 4997, 4998 };
-	for(int key : keys)
-		local_agg[key] = 0ul;
+			4995, 4996, 4997, 4998 };*/
+	//vector<int> keys = {1, 2, 3, 4, 5, 6};
+	//for(int key : keys)
+		//local_agg[key] = 0ul;
 
 	int aggKey;
 	hrtime_t t_start, t_end;
 	t_start = gethrtime();
 	for (int i = 0; i < num_of_segs; i++) {
 		uint64_t cur_vec = bit_vector_j1[i] & bit_vector_j2[i] & bit_vector_j3[i];
+		//uint64_t cur_vec = bit_vector_j3[i];
 		int data_ind = 0;
 		for (; cur_vec;) {
 			data_ind = 64 - __builtin_ffsl(cur_vec);
@@ -92,6 +86,7 @@ void AggApi::agg(Node<Query>* node, Result *result) {
 			s_nation = groupByMap_supp->at(lo_skey_comp[data_ind]);
 			d_year = groupByMap_date->at(lo_dkey_comp[data_ind]);
 			aggKey = aggKeyMap3D[c_nation][s_nation][d_year];
+			//aggKey = d_year;
 
 			//aggregation value
 			lo_rev = lo_revenue->encoder.i_dict[lo_rev_comp[data_ind]];
@@ -99,10 +94,14 @@ void AggApi::agg(Node<Query>* node, Result *result) {
 			/*if (local_agg.find(aggKey) == local_agg.end()) {
 				if (first) {
 					first = false;
-					printBitVector(cur_vec, i + 1);
+					printf("====Partition: %d\n====", curPart);
+					printf("j1: ");
+					printBitVector(bit_vector_j1[i], i + 1);
+					printf("j2: ");
+					printBitVector(bit_vector_j2[i], i + 1);
+					printf("j3: ");
+					printBitVector(bit_vector_j3[i], i + 1);
 				}
-				printf("%d(%d)|%d| \n", data_ind - i * 64 + 1, data_ind + 1,
-						s + data_ind + 1);
 			}*/
 
 			local_agg[aggKey] += lo_rev;
@@ -110,7 +109,7 @@ void AggApi::agg(Node<Query>* node, Result *result) {
 		}
 	}
 	t_end = gethrtime();
-	result->addRuntime(AGG, make_tuple(t_start, t_end, -1, curPart));
+	result->addRuntime(false, JOB_TYPE::AGG, make_tuple(t_start, t_end, -1, curPart));
 
 	/*table *cust_table = joins[0]->dimensionScan->getBaseTable();
 	 column *c_nation_col =

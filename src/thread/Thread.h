@@ -9,9 +9,12 @@
 #include <sys/processor.h>
 #include <sys/procset.h>
 #include <thread.h>
-#else
-#include "util/Types.h"
+//#else
 #endif
+
+#include "util/Types.h"
+#include "util/Query.h"
+
 
 #define FREELISTSIZE 6
 
@@ -32,7 +35,7 @@ struct Node {
 	Node(T value) :
 			value(value), next(nullptr) {
 	}
-	Node(int r_id, int p_id, int j_type) :
+	Node(int r_id, int p_id, JOB_TYPE j_type) :
 			next(nullptr) {
 		value.setFields(r_id, p_id, j_type);
 	}
@@ -53,7 +56,7 @@ class Thread {
 	int pid;
 
 	int nextSlot = 0;
-	std::vector<Node<T>*> node_pool;
+	std::vector<Node<Query>*> node_pool;
 
 public:
 	Thread() :
@@ -178,7 +181,7 @@ public:
 		//printf("(%d) ...\n", nextSlot++);
 	}
 
-	Node<T>* returnNextNode(int r_id, int p_id, int j_type) {
+	Node<T>* returnNextNode(int r_id, int p_id, JOB_TYPE j_type) {
 		if (nextSlot < 50) {
 			//printf("new node...\n");
 			Node<T>* newNode = new Node<T>();

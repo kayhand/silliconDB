@@ -28,7 +28,7 @@ private:
 	void initializeAgg() {
 		table_meta *t1 = &(joins[0]->dimensionScan->getBaseTable()->t_meta); //customer
 		table_meta *t2 = &(joins[1]->dimensionScan->getBaseTable()->t_meta); //supplier
-		table_meta *t3 = &(joins[2]->dimensionScan->getBaseTable()->t_meta); //supplier
+		table_meta *t3 = &(joins[2]->dimensionScan->getBaseTable()->t_meta); //date
 
 		int keys1 = t1->groupByKeys.size();
 		int keys2 = t2->groupByKeys.size();
@@ -96,6 +96,10 @@ public:
 
 	int TotalJoins(){
 		return this->joins.size();
+	}
+
+	std::vector<JoinApi*> Joins(){
+		return joins;
 	}
 
 	void agg(Node<Query>* node, Result *result);

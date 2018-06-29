@@ -11,6 +11,7 @@ void JoinApi::hwJoin(dax_queue_t **queue, Node<Query>* node) {
 
 	int curPart = node->value.getPart();
 	int ind = joinColId + curPart * this->num_of_columns;
+	//printf("HW Join -- part: %d, col: %d\n", curPart, ind);
 	column *join_col = &(factTable->columns[ind]);
 
 	int num_of_els = join_col->c_meta.col_size;
@@ -19,7 +20,7 @@ void JoinApi::hwJoin(dax_queue_t **queue, Node<Query>* node) {
 	this->src.elements = num_of_els;
 	this->dst.elements = num_of_els;
 
-	void* join_vector = getJoinBitVector(curPart);
+	void* join_vector = (void*) getJoinBitVector(curPart);
 	dst.data = join_vector;
 
 	node->t_start = gethrtime();
@@ -40,6 +41,7 @@ void JoinApi::swJoin(Node<Query>* node, Result *result) {
 
 	int curPart = node->value.getPart();
 	int ind = joinColId + curPart * this->num_of_columns;
+	//printf("SW Join -- part: %d, col: %d\n", curPart, ind);
 	column *join_col = &(factTable->columns[ind]);
 
 	int num_of_els = join_col->c_meta.col_size;
@@ -99,12 +101,15 @@ void JoinApi::swJoin(Node<Query>* node, Result *result) {
 	cur_result = 0;
 
 	t_end = gethrtime();
-	//if(remainder < 64)
-		//printf("els: %d, last data: %d, last seg. pos: %d\n", num_of_els, dataInd, i);
+	/*if(remainder < 64){
+		printf("part: %d\n", curPart);
+		printf("els: %d, last data: %d, last seg. pos: %d\n", num_of_els, dataInd, i);
+		printf("Remainder: %d\n", remainder);
+	}*/
 
 	//printf("Core Join (p: %d, els: %d)\n", curPart, num_of_els);
 
-	result->addRuntime(SW_JOIN, make_tuple(t_start, t_end, -1, curPart));
-	result->addCountResult(make_tuple(count, node->value.getTableId()));
+	result->addRuntime(false, this->j_type, make_tuple(t_start, t_end, -1, curPart));
+	result->addCountResult(make_tuple(this->j_type, count));
 	//printf("Core Count (join): %d for part %d\n", count, curPart);
 }
