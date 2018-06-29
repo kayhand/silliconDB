@@ -5,47 +5,50 @@
 #include "Helper.h"
 
 class Query {
-    public:
-        Query(){
-	    p_type = -1;
-	    part_id = -1;
-	    table_id = -1;
-	}
-        Query(int type, int p_id, int t_id) : p_type(type), part_id(p_id), table_id(t_id){
-	    //udata.p_id = this->part_id;
-	}
-        ~Query(){}
 
-	void setFields(int r_id, int p_id, int t_id){
-	   this->p_type = r_id;
-	   this->part_id = p_id;
-	   this->table_id = t_id;
+public:
+	Query(){}
+
+	Query(int type, int p_id, JOB_TYPE j_type) :
+			p_type(type), part_id(p_id), job_type(j_type) {
 	}
 
-	void setPartId(int p_id){
-	    this->part_id = p_id;
+	~Query(){}
+
+	void setFields(int r_id, int p_id, JOB_TYPE j_id) {
+		this->p_type = r_id;
+		this->part_id = p_id;
+		this->job_type = j_id;
 	}
 
-	int &getType(){
-	    return this->p_type;
+	void setPartId(int p_id) {
+		this->part_id = p_id;
 	}
-	int &getPart(){
-	    return this->part_id;
+
+	int &getType() {
+		return this->p_type;
 	}
-	int &getTableId(){
-	    return this->table_id;
+
+	int &getPart() {
+		return this->part_id;
 	}
-	void flipDax(){
-	    dax_flag = !dax_flag;
+
+	JOB_TYPE &getJobType() {
+		return this->job_type;
 	}
-	bool &isDax(){
-	    return dax_flag;
+
+	void flipDax() {
+		dax_flag = !dax_flag;
 	}
-	
-    private:
-        int p_type;
-	int part_id;
-	int table_id; // 0 -> lineitem, 1 -> agg
+
+	bool &isDax() {
+		return dax_flag;
+	}
+
+private:
+	int p_type = -1;
+	int part_id = -1;
+	JOB_TYPE job_type;
 	bool dax_flag = false;
 };
 

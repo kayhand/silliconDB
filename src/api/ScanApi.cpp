@@ -5,7 +5,7 @@
 #include <memory>
 #include <sys/time.h>
 
-#ifdef __sun 
+//#ifdef __sun
 void ScanApi::hwScan(dax_queue_t **queue, Node<Query>* node) {
 	int curPart = node->value.getPart();
 	int ind = colId + (curPart) * baseTable->t_meta.num_of_columns;
@@ -24,7 +24,7 @@ void ScanApi::hwScan(dax_queue_t **queue, Node<Query>* node) {
 	node->post_data.node_ptr = (void *) node;
 
 	dax_status_t scan_status;
-	if (cmp == dax_compare_t::DAX_GT_AND_LE){
+	if (cmp == dax_compare_t::DAX_GT_AND_LE || cmp == dax_compare_t::DAX_EQ_OR_EQ){
 		scan_status = dax_scan_range_post(*queue, flag, &src, &dst, cmp, &predicate1, &predicate2, (void *) &(node->post_data));
 	}
 	else{
@@ -33,9 +33,9 @@ void ScanApi::hwScan(dax_queue_t **queue, Node<Query>* node) {
 
 	if(scan_status != 0)
 		printf("Dax Error during scan! %d\n", scan_status);
-	//printf("Dax (%d), (%d)\n", curPart, node->value.getTableId());
+	//printf("Dax (%d), (%d)\n", curPart, node->value.getJobType());
 }
-#endif
+//#endif
 
 void ScanApi::simdScan16(Node<Query>* node, Result *result) {
 	int curPart = node->value.getPart();
@@ -89,6 +89,11 @@ void ScanApi::simdScan16(Node<Query>* node, Result *result) {
 				uint64_t res2 = ~(__builtin_vis_fcmpgt16(data_vec, converted_pred2));
 				cur_result |= (res1 & res2);
 			}
+			else if (cmp == dax_compare_t::DAX_EQ_OR_EQ){
+				uint64_t res1 = __builtin_vis_fcmpeq16(data_vec, converted_pred1);
+				uint64_t res2 = __builtin_vis_fcmpeq16(data_vec, converted_pred2);
+				cur_result |= (res1 | res2);
+			}
 		}
 
 		if (cmp == dax_compare_t::DAX_LE) {
@@ -110,8 +115,8 @@ void ScanApi::simdScan16(Node<Query>* node, Result *result) {
 		count += __builtin_popcountl(bit_vector[i - 1]);
 	}
 
-	result->addRuntime(SW_SCAN, make_tuple(t_start, t_end, t_id, curPart));
-	result->addCountResult(make_tuple(count, baseTable->t_meta.t_id));
+	result->addRuntime(false, this->j_type, make_tuple(t_start, t_end, t_id, curPart));
+	result->addCountResult(make_tuple(this->j_type, count));
 	//printf("Core Count: %d for part %d\n", count, curPart);
 
 	//if(extra_vals > 0)

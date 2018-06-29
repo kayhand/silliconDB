@@ -37,12 +37,12 @@ void Partitioner::roundRobin(std::string path, int part_size)
     }
 
     if(remainder > 0){
-        this->num_of_parts++;
         partitionMap[curPart] = std::make_pair(curPart * els_per_part, num_of_els - 1);
         partitionSizes[curPart] = remainder;
+        num_of_parts++;
     }
 
-    printf("\nNumber of elements: %d, ", num_of_els);
+    printf("Number of elements: %d, ", num_of_els);
     printf("Number of partitions: %d, Remainder: %d\n", this->num_of_parts, remainder);
 	
     //for(auto &curr : partitionMap){

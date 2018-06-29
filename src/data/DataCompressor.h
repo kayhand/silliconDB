@@ -19,6 +19,7 @@
 #include <bitset>
 
 #include "Partitioner.h"
+//#include "api/ParserApi.h"
 
 #define WORD_SIZE 64
 
@@ -29,6 +30,7 @@ enum data_type_t {
 };
 
 struct column_meta {
+	bool isFK = false;
 	data_type_t data_type;
 
 	int column_id = -1;
@@ -74,6 +76,7 @@ struct column {
 struct table_meta {
 	int t_id;
 	int groupByColId; //customer (c_nation): 4, date(d_year): 4
+	bool isFact = false;
 
 	int num_of_columns;
 	int num_of_lines;
@@ -85,7 +88,7 @@ struct table_meta {
 	string path;
 
 	unordered_map<uint32_t, uint32_t> groupByMap; //pk to compressed_val
-	unordered_map<int, bool> groupByKeys; //distinct group by keys
+	unordered_map<int, bool> groupByKeys; //distinct gro
 };
 
 struct table {
@@ -98,26 +101,76 @@ private:
 	struct table t;
 	Partitioner *partitioner;
 
-	int* distinct_keys;
+	int* distinct_keys = NULL;
 	int scale_factor = 1;
 
 	void cleanUp();
 	void initTable();
 
 public:
-	DataCompressor(string filename, int t_id, int g_id,
-			Partitioner &partitioner, int sf);
+
+	DataCompressor(string filename, int t_id, int gby_id,
+			int part_size, int sf){
+		table_meta *t_meta = &(this->t.t_meta);
+		t_meta->path = filename;
+		t_meta->t_id = t_id;
+		t_meta->groupByColId = gby_id;
+
+		partitioner = new Partitioner(filename, part_size);
+		t_meta->num_of_parts = partitioner->getNumberOfParts();
+		this->scale_factor = sf;
+	}
 
 	//Copy constructor
 	DataCompressor(const DataCompressor& source);
 	//Overloaded assigment
 	DataCompressor& operator=(const DataCompressor& source);
 	//Destructor
-	~DataCompressor();
+	~DataCompressor() {
+		for (int i = 0; i < t.t_meta.num_of_columns; i++) {
+			if (t.t_meta.t_id == 0 && (i == 2 || i == 4 || i == 5)) //Skip foreign keys in the fact table
+				continue;
+			switch (t.columns[i].c_meta.data_type) {
+			case data_type_t::INT:
+				delete[] t.columns[i].encoder.i_dict;
+				break;
+			case data_type_t::STRING:
+				t.columns[i].encoder.dict.clear();
+				break;
+			case data_type_t::DOUBLE:
+				delete[] t.columns[i].encoder.d_dict;
+				break;
+			}
+		}
 
-	void createTableMeta();
-	void parseData();
-	void parseFactTable(column*, column*, column*);
+		int all_parts = t.t_meta.num_of_columns * t.t_meta.num_of_parts;
+		for (int i = 0; i < all_parts; i++) {
+			switch (t.columns[i].c_meta.data_type) {
+			case data_type_t::INT:
+				t.columns[i].i_keys.clear();
+				t.columns[i].i_pairs.clear();
+				break;
+			case data_type_t::STRING:
+				t.columns[i].keys.clear();
+				t.columns[i].str_pairs.clear();
+				break;
+			case data_type_t::DOUBLE:
+				t.columns[i].d_keys.clear();
+				t.columns[i].d_pairs.clear();
+				break;
+			}
+			delete[] t.columns[i].data;
+			delete[] t.columns[i].compressed;
+		}
+		delete[] t.columns;
+		delete[] distinct_keys;
+		delete partitioner;
+	}
+
+	void createTableMeta(bool);
+	void parseDimensionTable();
+	void parseFactTable(unordered_map<int, column*> &, unordered_map<int, int> &);
+	//void parseFactTable(column*, column*, column*);
 	void createDictionaries();
 	void createEncoders();
 	void createColumns();

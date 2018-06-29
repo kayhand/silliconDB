@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <istream>
 
 #include "thread/Thread.h"
 #include "thread/ThreadHandler.h"
@@ -16,61 +17,73 @@
 #include "util/WorkQueue.h"
 #include "sched/ProcessingUnit.h"
 #include "util/Helper.h"
+#include "api/ParserApi.h"
 
-std::atomic<int> li_cnt = ATOMIC_VAR_INIT(0);
-std::atomic<int> o_cnt = ATOMIC_VAR_INIT(0);
+std::unordered_map<string, string> params{
+	{"num_of_cores", "1"},
+	{"port_id", "9999"},
+	{"client", "localhost"},
+	{"data_path", "/tmp/ssb_data/toy_data/"},
+	{"part_size", "12800"},
+	{"dax_queue_size", "1"},
+	{"sf", "1"},
+	{"scheduling", "operator_at_a_time"},
+	{"q_id", "31"}
+};
 
-int main(int argc, char** argv) {
-	if (argc < 9) {
-		printf(
-				"usage: %s <workers> <port> <ip> <fileName> <fileName2> <part_size> <scale_factor> <technique> \n",
-				argv[0]);
-		exit(-1);
+void setParams(int argc, char **argv){
+	string paramPair;
+
+	for(int argId = 1; argId < argc; argId++){
+		paramPair = argv[argId];
+		cout << paramPair << endl;
+		int splitPos = paramPair.find(':'); // 12
+		string param = paramPair.substr(0, splitPos); //"num_of_cores"
+		string val = paramPair.substr(splitPos + 1); //"4"
+
+		if(params.find(param) == params.end()){
+			printf("Undefined param name: %s!\n", param.c_str());
+		}
+		else{
+			params[param] = val;
+		}
 	}
 
-	int workers = atoi(argv[1]);
-	int port = atoi(argv[2]);
-	string ip = argv[3];
-	string fileName = argv[4]; //lineorder
-	string fileName2 = argv[5]; //supplier
-	string fileName3 = argv[6]; //customer
-	string fileName4 = argv[7]; //date
-	int part_size = atoi(argv[8]);
-	int dax_queue_size = atoi(argv[9]);
-	int sf = atoi(argv[10]);
-	int technique = atoi(argv[11]); // 0: sDB, 1: op_at_a_time, 2: data division
+	printf("\n+++++++++PARAMS++++++\n");
+	for(auto parPair : params){
+		std::cout << parPair.first << " : " << parPair.second << std::endl;
+	}
+	printf("+++++++++++++++++++++\n\n");
+}
 
-	//Partitioner: Init partitioners
-	//Partitioner: Create partition metadata
-	Partitioner line_part;
-	line_part.roundRobin(fileName, part_size);
-	Partitioner supp_part;
-	supp_part.roundRobin(fileName2, part_size);
-	Partitioner customer_part;
-	customer_part.roundRobin(fileName3, part_size);
-	Partitioner date_part;
-	date_part.roundRobin(fileName4, part_size);
+int main(int argc, char** argv) {
+	if(argc == 1){
+		printf("\nNo parameters specified, will start with default paramaters!\n\n");
+	}
+	else{
+		printf("\n%d parameters specified, will override the default values!\n\n", argc-1);
+	}
+	setParams(argc, argv);
 
-	//DataLoader: Init loader
-	//DataLoader: Create data compressor (merge with initialization)
-	//DataLoader: Do compression
-	DataLoader data_loader(4);
+	int workers = atoi(params["num_of_cores"].c_str());
+	int port = atoi(params["port_id"].c_str());
+	int part_size = atoi(params["part_size"].c_str());
+	int dax_queue_size = atoi(params["dax_queue_size"].c_str());
+	int sf = atoi(params["sf"].c_str());
+	string queryFile = params["q_id"];
+	string ip = params["client"];
+	string dataPath = params["data_path"];
+	string technique = params["scheduling"]; // 0: sDB, 1: op_at_a_time, 2: data division
+	//int q_id = atoi(queryFile.c_str()); //31: SSB Q3_1, 32: SSB Q3_2 ...
 
-	data_loader.initializeCompressor(fileName2, 1, 4, supp_part, sf); //4: s_nation
-	data_loader.parseTable(1);
-	data_loader.compressTable(1);
+	cout << "technique: " << technique << endl;
 
-	data_loader.initializeCompressor(fileName3, 2, 4, customer_part, sf); //4: c_nation
-	data_loader.parseTable(2);
-	data_loader.compressTable(2);
+	DataLoader dataLoader(queryFile);
+	dataLoader.processTables(dataPath, part_size, sf);
 
-	data_loader.initializeCompressor(fileName4, 3, 4, date_part, sf); //4: d_year
-	data_loader.parseTable(3);
-	data_loader.compressTable(3);
-
-	data_loader.initializeCompressor(fileName, 0, -1, line_part, sf); //-1: no lineorder columns as agg. key
-	data_loader.parseTable(0);
-	data_loader.compressTable(0);
+	//dataLoader.initializeDataCompressors(dataPath, part_size, sf);
+	//dataLoader.parseTables();
+	//dataLoader.compressTables();
 
 	//SiliconDB Handler
 	// 1) Create processing units and resource handlers for them
@@ -87,70 +100,25 @@ int main(int argc, char** argv) {
 	std::vector<ProcessingUnit*> proc_units;
 	proc_units.reserve(10);
 
-	EXEC_TYPE e_type = EXEC_TYPE::SDB;
-	if(technique == 0)
-		e_type = EXEC_TYPE::SDB;
-	else if(technique == 1)
-		e_type = EXEC_TYPE::OAT;
-	else if(technique == 2)
-		e_type = EXEC_TYPE::DD;
-
 	//Synchronization: Init params
 	int num_of_barriers = workers + 1;
 	Syncronizer thr_sync;
 	thr_sync.initBarriers(num_of_barriers);
-	thr_sync.initAggCounter(line_part.getNumberOfParts());
+	thr_sync.initAggCounter(dataLoader.TotalFactParts());
 
 	for (int i = 0; i < 1; i++) {
-		ProcessingUnit *proc_unit = new ProcessingUnit(workers);
-		proc_unit->addCompressedTable(data_loader.getDataCompressor(0));
-		proc_unit->addCompressedTable(data_loader.getDataCompressor(1));
-		proc_unit->addCompressedTable(data_loader.getDataCompressor(2));
-		proc_unit->addCompressedTable(data_loader.getDataCompressor(3));
+		ProcessingUnit *proc_unit = new ProcessingUnit(workers, technique, &dataLoader);
 
-		proc_unit->initializeAPI();
-		proc_unit->createProcessingUnit(&thr_sync, e_type, dax_queue_size);
-		if (e_type == EXEC_TYPE::SDB || e_type == EXEC_TYPE::OAT) {
-			proc_unit->addWork(date_part.getNumberOfParts(), 3, sf,
-					proc_unit->getSharedQueue());
-			proc_unit->addWork(customer_part.getNumberOfParts(), 2, sf,
-					proc_unit->getSharedQueue());
-			proc_unit->addWork(supp_part.getNumberOfParts(), 1, sf,
-					proc_unit->getSharedQueue());
-			proc_unit->addWork(line_part.getNumberOfParts(), 0, sf,
-					proc_unit->getSharedQueue());
-		}
-		else if(e_type == EXEC_TYPE::DD){
-			int totalDimScans = date_part.getNumberOfParts() + customer_part.getNumberOfParts() + supp_part.getNumberOfParts();
-			int totalScans = totalDimScans + line_part.getNumberOfParts();
-			int totalDaxScans = totalScans / (2.56 + 1) * 2.56;
-
-			printf("Dax will do %d scans out of %d in total!\n", totalDaxScans, totalScans);
-
-			proc_unit->addWork(date_part.getNumberOfParts(), 3, sf, proc_unit->getHWQueue());
-			proc_unit->addWork(customer_part.getNumberOfParts(), 2, sf, proc_unit->getHWQueue());
-			proc_unit->addWork(supp_part.getNumberOfParts(), 1, sf, proc_unit->getHWQueue());
-			totalDaxScans -= totalDimScans;
-			proc_unit->addWork(totalDaxScans, 0, sf, proc_unit->getHWQueue());
-
-			//Add remaining lineorder scans to the sw_queue
-			for (int p_id = totalDaxScans; p_id < line_part.getNumberOfParts(); p_id++) {
-				Query item(0, p_id, 0); //(0: sw - 1:hw, part_id, table_id)
-				Node<Query> *newNode = new Node<Query>(item);
-				proc_unit->getSWQueue()->add(newNode);
-			}
-
-			printf("DAX Scan Queue\n");
-			proc_unit->getHWQueue()->printQueue();
-			printf("Core Scan Queue\n");
-			proc_unit->getSWQueue()->printQueue();
-		}
+		//proc_unit->addCompressedTables(dataLoader.getDataCompressors());
+		proc_unit->initializeAPI(dataLoader.getQueryParser());
+		proc_unit->createProcessingUnit(&thr_sync, dax_queue_size);
+		proc_unit->initWorkQueues(sf);
 
 		proc_units.push_back(proc_unit);
 	}
 
 	int numberOfConnections = 1;
-	TCPStream* connection;
+	TCPStream* connection = NULL;
 	while (numberOfConnections > 0) {
 		printf("Gimme some connection!\n");
 		connection = connectionAcceptor->accept();
@@ -164,7 +132,7 @@ int main(int argc, char** argv) {
 		}
 
 		for (ProcessingUnit *proc_unit : proc_units) {
-			proc_unit->joinThreads();
+		    proc_unit->joinThreads();
 		}
 
 		numberOfConnections--;
@@ -177,6 +145,7 @@ int main(int argc, char** argv) {
 		delete proc_unit;
 	}
 	delete connectionAcceptor;
+
 	return 0;
 }
 

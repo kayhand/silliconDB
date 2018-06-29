@@ -26,20 +26,20 @@ private:
 	int num_of_segments; //actually segments per partition
 	int blockSize;
 
-	uint64_t pred1;
-	uint64_t pred2;
-	dax_compare_t cmp;
+	uint64_t pred1 = 0ul;
+	uint64_t pred2 = 0ul;
+	dax_compare_t cmp = DAX_EQ;
 
-	void *filter_vector;
+	void *filter_vector = NULL;
 
 	dax_int_t predicate1;
 	dax_int_t predicate2;
+	uint64_t flag = DAX_CACHE_DST;
 
 	dax_vec_t src;
 	dax_vec_t dst;
-	uint64_t flag;
 
-	atomic<int> partsDone;
+	JOB_TYPE j_type;
 
 	void reserveBitVector(int block_size) {
 		posix_memalign(&filter_vector, 4096, block_size);
@@ -52,13 +52,15 @@ private:
 	friend class JoinApi;
 
 public:
-	ScanApi(table *baseTable, int selCol) {
+	ScanApi(table *baseTable, int selCol, JOB_TYPE j_type, query_predicate &q_pred) {
 		this->baseTable = baseTable;
 		this->colId = selCol;
 		this->num_of_segments = baseTable->t_meta.num_of_segments / baseTable->t_meta.num_of_parts;
 		this->blockSize = baseTable->t_meta.num_of_segments * 8;
+		this->num_of_parts = baseTable->t_meta.num_of_parts;
+		this->j_type = j_type;
 
-		initializeScan();
+		initScanPredicates(q_pred);
 	}
 
 	~ScanApi() {
@@ -69,32 +71,33 @@ public:
 		return num_of_parts;
 	}
 
-	bool isCompleted() {
+	/*bool isCompleted() {
 		return partsDone == num_of_parts;
 	}
 
 	void incrementCounter() {
 		partsDone++;
-	}
+	}*/
 
-	void initializeScan() {
-		this->num_of_parts = baseTable->t_meta.num_of_parts;
 
-		int t_id = baseTable->t_meta.t_id;
-		if (t_id == 0) { //lo
-			pred1 = baseTable->columns[colId].i_keys[25]; //lo_quantity
-			cmp = dax_compare_t::DAX_LE;
-		} else if (t_id == 1) { //supplier
-			pred1 = baseTable->columns[colId].keys["ASIA"]; //s_region
-			cmp = dax_compare_t::DAX_EQ;
-		} else if (t_id == 2) { //customer
-			pred1 = baseTable->columns[colId].keys["ASIA"]; //c_region
-			cmp = dax_compare_t::DAX_EQ;
-		} else if (t_id == 3) { //date
-			pred1 = baseTable->columns[colId].i_keys[1991]; //d_year
-			pred2 = baseTable->columns[colId].i_keys[1997]; //d_year
-			cmp = dax_compare_t::DAX_GT_AND_LE;
+	void initScanPredicates(query_predicate &q_pred){
+		printf("\tInitializing predicates for ScanAPI ...\n");
+		q_pred.printPred();
+
+		cmp = q_pred.comparison;
+
+		if(q_pred.columnType == data_type_t::STRING){
+			pred1 = baseTable->columns[colId].keys[q_pred.params[0]];
+			if(q_pred.params[1] != "")
+				pred2 = baseTable->columns[colId].keys[q_pred.params[1]];
 		}
+		else if(q_pred.columnType == data_type_t::INT){
+			pred1 = baseTable->columns[colId].i_keys[atoi(q_pred.params[0].c_str())];
+			if(q_pred.params[1] != "")
+				pred2 = baseTable->columns[colId].i_keys[atoi(q_pred.params[1].c_str())];
+		}
+		cout << "\t\t" << " set predicates to:  " << pred1 << " " << pred2
+				 << " for relation with id: " << getBaseTable()->t_meta.t_id << endl;
 
 		reserveBitVector(blockSize);
 		initDaxVectors();
@@ -110,7 +113,7 @@ public:
 		src.format = DAX_BITS;
 		src.elem_width = baseTable->columns[colId].encoder.num_of_bits + 1;
 
-		printf("Dax bits: %d\n", src.elem_width);
+		//printf("Dax bits: %d\n", src.elem_width);
 
 		predicate1.format = src.format;
 		predicate1.elem_width = src.elem_width;
@@ -144,9 +147,9 @@ public:
 		return this->num_of_segments;
 	}
 
-#ifdef __sun
+//#ifdef __sun
 	void hwScan(dax_queue_t**, Node<Query>*);
-#endif
+//#endif
 	void simdScan16(Node<Query>*, Result *result);
 
 	//helper

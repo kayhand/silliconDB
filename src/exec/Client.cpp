@@ -19,7 +19,7 @@ int main(int argc, char** argv)
     TCPConnector* connector = new TCPConnector();
     TCPStream* stream = connector->connect(argv[2], atoi(argv[1]));
     if (stream) {
-        query = "Q1;1998-10-01";
+        query = "Q3_1";
         stream->send(query.c_str(), query.size());
         printf("sent - %s\n", query.c_str());
         len = stream->receive(line, sizeof(line));
@@ -31,4 +31,3 @@ int main(int argc, char** argv)
 
    exit(0);
 }
-

@@ -1,0 +1,5 @@
+SSB QUERY 3.1
+
+dimension: date.tbl
+predicates: d_year>=1992 AND d_year<=1997 
+groupByColumn: d_year

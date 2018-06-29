@@ -10,8 +10,10 @@ std::vector<std::string> explode(std::string const & s, char delim);
 
 class Partitioner {
 public:
-	Partitioner() {
+	Partitioner(std::string filePath, int part_size) {
+		this->roundRobin(filePath, part_size);
 	}
+
 	~Partitioner() {
 	}
 
@@ -41,13 +43,15 @@ public:
 	}
 
 private:
-	std::unordered_map<int, std::pair<int, int>> partitionMap;
-	int element_size;
-	std::vector<std::string> schema; //first line of each file to define attribute data types
-	int num_of_atts;
+	int element_size = 0;
+	int num_of_atts = 0;
+	int num_of_parts = 0;
+	int segs_per_part = 0;
+
 	std::unordered_map<int, int> partitionSizes;
-	int num_of_parts;
-	int segs_per_part;
+	std::unordered_map<int, std::pair<int, int>> partitionMap;
+	std::vector<std::string> schema; //column types
+
 };
 
 #endif

@@ -61,7 +61,7 @@ public:
 		curNode = curNode->next;
 		while (curNode != NULL) {
 			printf("(%d : %d) - ", curNode->value.getPart(),
-					curNode->value.getTableId());
+					curNode->value.getJobType());
 			curNode = curNode->next;
 		}
 		printf("\n");
