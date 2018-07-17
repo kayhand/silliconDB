@@ -20,15 +20,17 @@
 #include "api/ParserApi.h"
 
 std::unordered_map<string, string> params{
-	{"num_of_cores", "1"},
+	{"num_of_cores", "4"},
 	{"port_id", "9999"},
 	{"client", "localhost"},
-	{"data_path", "/tmp/ssb_data/toy_data/"},
-	{"part_size", "12800"},
-	{"dax_queue_size", "1"},
+	{"data_path", "/tmp/ssb_data/"},
+	{"run_type", "full"},
+	{"part_size", "128000"},
+	{"dax_queue_size", "4"},
 	{"sf", "1"},
 	{"scheduling", "operator_at_a_time"},
-	{"q_id", "31"}
+	{"query_path", "/export/home/demo/silliconDB/src/bench/scripts/ssb/"},
+	{"q_id", "3_1.txt"}
 };
 
 void setParams(int argc, char **argv){
@@ -47,6 +49,12 @@ void setParams(int argc, char **argv){
 		else{
 			params[param] = val;
 		}
+	}
+
+	if(params["run_type"] == "toy"){
+		params["part_size"] = "12800";
+		params["dax_queue_size"] = "1";
+		params["num_of_cores"] = "1";
 	}
 
 	printf("\n+++++++++PARAMS++++++\n");
@@ -70,16 +78,17 @@ int main(int argc, char** argv) {
 	int part_size = atoi(params["part_size"].c_str());
 	int dax_queue_size = atoi(params["dax_queue_size"].c_str());
 	int sf = atoi(params["sf"].c_str());
-	string queryFile = params["q_id"];
+	string queryFile = params["query_path"] + params["q_id"];
 	string ip = params["client"];
 	string dataPath = params["data_path"];
 	string technique = params["scheduling"]; // 0: sDB, 1: op_at_a_time, 2: data division
-	//int q_id = atoi(queryFile.c_str()); //31: SSB Q3_1, 32: SSB Q3_2 ...
+	string run_type = params["run_type"];
 
 	cout << "technique: " << technique << endl;
 
-	DataLoader dataLoader(queryFile);
-	dataLoader.processTables(dataPath, part_size, sf);
+	DataLoader dataLoader;
+	dataLoader.parseQuery(queryFile);
+	dataLoader.processTables(dataPath, part_size, sf, run_type);
 
 	//dataLoader.initializeDataCompressors(dataPath, part_size, sf);
 	//dataLoader.parseTables();
@@ -109,7 +118,6 @@ int main(int argc, char** argv) {
 	for (int i = 0; i < 1; i++) {
 		ProcessingUnit *proc_unit = new ProcessingUnit(workers, technique, &dataLoader);
 
-		//proc_unit->addCompressedTables(dataLoader.getDataCompressors());
 		proc_unit->initializeAPI(dataLoader.getQueryParser());
 		proc_unit->createProcessingUnit(&thr_sync, dax_queue_size);
 		proc_unit->initWorkQueues(sf);
@@ -117,6 +125,7 @@ int main(int argc, char** argv) {
 		proc_units.push_back(proc_unit);
 	}
 
+	//return 0;
 	int numberOfConnections = 1;
 	TCPStream* connection = NULL;
 	while (numberOfConnections > 0) {
@@ -148,4 +157,3 @@ int main(int argc, char** argv) {
 
 	return 0;
 }
-

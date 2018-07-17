@@ -43,26 +43,35 @@ void DataCompressor::createTableMeta(bool isFact) {
 	schema->clear();
 }
 
-//dimPKCols: customer, date, supplier
-//joinFKIds: 2 (lo_custkey), 4 (lo_orderdate), 5 (lo_suppkey)
-void DataCompressor::parseFactTable(unordered_map<int, column*> &dimPKCols,
+void DataCompressor::parseFactTable(unordered_map<int, DataCompressor*> &dimComps,
 		unordered_map<int, int> &joinFKIds) {
 	printf("Parsing the lineorder table...\n");
 
-	printf("Registering some dimension tables info...\n");
-	for (auto &curPair : dimPKCols) {
+	printf("Registering info for some dimension tables ...\n");
+	for (auto &curPair : dimComps) {
 		int t_id = curPair.first;
 		int dimFKeyId = joinFKIds[t_id];
-		printf("Dim. FK Id in Fact Table (%d) - ", dimFKeyId);
-		printf("Dim. PK Id (%d)\n", dimPKCols[t_id]->c_meta.column_id);
+
+		table *dimTable = curPair.second->getTable();
+		column* dimPKCol = &(dimTable->columns[0]);
 
 		column *factFKCol = &t.columns[dimFKeyId];
 		factFKCol->c_meta.isFK = true;
 
-		for (auto &curPair : dimPKCols[t_id]->i_keys)
+		printf("Dim. FK Id in Fact Table (%d) - ", dimFKeyId);
+		printf("Dim. PK Id (%d)\n", dimPKCol->c_meta.column_id);
+
+		/*if(dimPKCol->encoder.num_of_bits > 16){
+			printf("This column needs to be co-partitioned!\n");
+			printf("Num. of bits: %d\n", dimPKCol->encoder.num_of_bits);
+			factFKCol->c_meta.coPart = true;
+		}*/
+		printf("Dim. Table Size: (%d)\n", dimTable->t_meta.num_of_lines);
+
+		for (auto &curPair : dimPKCol->i_keys)
 			factFKCol->i_keys.insert(curPair);
 		distinct_keys[dimFKeyId] = factFKCol->i_keys.size();
-		factFKCol->encoder = dimPKCols[t_id]->encoder;
+		factFKCol->encoder = dimPKCol->encoder;
 	}
 
 	ifstream file;
@@ -219,7 +228,6 @@ void DataCompressor::parseDimensionTable() {
 }
 
 void DataCompressor::createEncoders() {
-
 	//t.t_meta.groupByColId
 	for (int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts;
 			col++) {
@@ -231,10 +239,10 @@ void DataCompressor::createEncoders() {
 		if (col >= t.t_meta.num_of_columns) {
 			cur_col.encoder.i_dict = t.columns[actual_col].encoder.i_dict;
 			cur_col.encoder.d_dict = t.columns[actual_col].encoder.d_dict;
+			cur_col.c_meta.isFK = t.columns[actual_col].c_meta.isFK;
 		}
 
 		int n_bits = cur_col.encoder.num_of_bits;
-		//int curPartSize = getPartSize(part_id); //How many data elements in the current part
 		int curPartSize = c_meta.col_size;
 
 		c_meta.num_of_codes = WORD_SIZE / (n_bits + 1);
@@ -248,34 +256,34 @@ void DataCompressor::createEncoders() {
 		cur_col.data = new uint32_t[curPartSize];
 		int curInd = 0;
 
+		if(t.columns[actual_col].c_meta.coPart)
+			printf("Will do co-partitioning on column %d for part %d\n", actual_col, part_id);
+
+		//Each column partition's data starts from index 0
 		for (auto &curPair : cur_col.i_pairs) {
-			//Each partition's data should start from index 0
-			cur_col.data[curInd++] =
-					t.columns[actual_col].i_keys[curPair.first];
+			cur_col.data[curInd++] = t.columns[actual_col].i_keys[curPair.first];
 		}
 		for (auto &curPair : cur_col.d_pairs) {
-			cur_col.data[curInd++] =
-					t.columns[actual_col].d_keys[curPair.first];
+			cur_col.data[curInd++] = t.columns[actual_col].d_keys[curPair.first];
 		}
 		for (auto &curPair : cur_col.str_pairs) {
 			cur_col.data[curInd++] = t.columns[actual_col].keys[curPair.first];
 		}
 	}
 
-	if (t.t_meta.groupByColId < 0)
-		return;
-
-	column* pk_col;
-	column* agg_col;
-	int total_cols = t.t_meta.num_of_columns * t.t_meta.num_of_parts;
-	for (int col = t.t_meta.groupByColId; col < total_cols;
+	if (t.t_meta.hasAggKey){
+		column* pk_col;
+		column* agg_col;
+		int total_cols = t.t_meta.num_of_columns * t.t_meta.num_of_parts;
+		for (int col = t.t_meta.groupByColId; col < total_cols;
 			col = col + t.t_meta.num_of_columns) {
-		pk_col = &(t.columns[col - t.t_meta.groupByColId]);
-		agg_col = &(t.columns[col]);
-		int colSize = agg_col->c_meta.col_size;
-		for (int ind = 0; ind < colSize; ind++) {
-			t.t_meta.groupByMap[pk_col->data[ind]] = agg_col->data[ind];
-			t.t_meta.groupByKeys[agg_col->data[ind]] = true;
+			pk_col = &(t.columns[col - t.t_meta.groupByColId]);
+			agg_col = &(t.columns[col]);
+			int colSize = agg_col->c_meta.col_size;
+			for (int ind = 0; ind < colSize; ind++) {
+				t.t_meta.groupByMap[pk_col->data[ind]] = agg_col->data[ind];
+				t.t_meta.groupByKeys[agg_col->data[ind]] = true;
+			}
 		}
 	}
 }
@@ -287,7 +295,7 @@ void DataCompressor::createDictionaries() {
 	for (int col = 0; col < t.t_meta.num_of_columns; col++) {
 		column &cur_col = t.columns[col];
 		if (t.t_meta.isFact && cur_col.c_meta.isFK) {
-			printf("Skipping FK column %d\n", col);
+			//printf("Skipping FK column %d\n", col);
 			continue;
 		} else {
 			int index = 0;
@@ -295,6 +303,7 @@ void DataCompressor::createDictionaries() {
 				cur_col.encoder.i_dict = new uint32_t[distinct_keys[col]];
 			else if (cur_col.d_keys.size() > 0)
 				cur_col.encoder.d_dict = new double[distinct_keys[col]];
+
 			for (auto curPair : cur_col.i_keys) {
 				cur_col.i_keys[curPair.first] = index;
 				cur_col.encoder.i_dict[index] = curPair.first;
@@ -385,6 +394,7 @@ void DataCompressor::bw_compression(column &c) {
 	 */
 }
 
+
 void DataCompressor::bit_compression(column &c) {
 	uint64_t newVal = 0, prevVal = 0;
 	uint64_t writtenVal = 0;
@@ -418,6 +428,134 @@ void DataCompressor::bit_compression(column &c) {
 	c.compressed[curIndex] = writtenVal;
 }
 
+/*co-partition column*/
+void DataCompressor::co_partition(column &c) {
+	//if this function is called the column is compressed with 32 bits encoding
+	int num_of_bits = c.encoder.num_of_bits; //31 bits
+	int new_bit_size = 16;
+	int num_of_segments = c.c_meta.num_of_segments;
+
+	int num_of_lines = num_of_bits + 1; //32
+	uint64_t *comp_col = c.compressed;
+	uint16_t *copart_col = (uint16_t*) c.co_partitioned;
+
+	for(int seg_id = 0; seg_id < num_of_segments; seg_id++){
+		uint64_t *seg_start = comp_col + seg_id * num_of_lines;
+
+		uint16_t *cp_start = copart_col + seg_id * num_of_lines * 2;
+		uint16_t *first_part = cp_start;
+		uint16_t *second_part = cp_start + num_of_lines;
+
+		int p1_ind = 0;
+		int p2_ind = 0;
+		for(int ind = 0; ind < num_of_lines; ind++){
+			uint64_t curLine = seg_start[ind];
+
+			uint32_t item1 = curLine >> 32;
+			uint32_t item2 = curLine;
+
+			if((item1 >> 16) | 0){ //second partition
+				second_part[p2_ind++] = (uint16_t) (item1 & ((2 ^ new_bit_size) - 1));
+			}
+			else{
+				first_part[p1_ind++] = (uint16_t) item1;
+			}
+
+			if((item2 >> 16) | 0){ //second partition
+				second_part[p2_ind++] = (uint16_t) (item2 & ((2 ^ new_bit_size) - 1));
+			}
+			else{
+				first_part[p1_ind++] = (uint16_t) item2;
+			}
+		}
+
+	}
+}
+
+/*co-partition column*/
+void DataCompressor::co_partition_test(column &c) {
+	if(c.c_meta.column_id != 4)
+		return;
+
+	//if this function is called the column is compressed with 15 bits encoding
+	int num_of_bits = c.encoder.num_of_bits; //15 bits
+	int new_bit_size = 8;
+	int clear_vec = pow(2, new_bit_size) - 1;
+	int num_of_segments = c.c_meta.num_of_segments;
+
+	int num_of_lines = num_of_bits + 1; //16
+	uint64_t* comp_col = c.compressed;
+	uint8_t* copart_col = (uint8_t*) c.co_partitioned;
+
+	printf("clear_vec: %d\n", clear_vec);
+	for(int seg_id = 0; seg_id < num_of_segments; seg_id++){
+		uint64_t* seg_start = comp_col + seg_id * num_of_lines;
+
+		uint8_t* cp_start = copart_col + seg_id * num_of_lines * 2;
+		uint8_t* first_part = cp_start;
+		uint8_t* second_part = cp_start + num_of_lines;
+
+		int p1_ind = 0;
+		int p2_ind = 0;
+		for(int ind = 0; ind < num_of_lines; ind++){
+			uint64_t curLine = seg_start[ind];
+
+			uint16_t item1 = curLine >> 48;
+			uint16_t item2 = curLine >> 32;
+			uint16_t item3 = curLine >> 16;
+			uint16_t item4 = curLine;
+
+			cout << "1) " << item1 << " 2) " << item2 << " 3) " << item3 << " 4) " << item4 << endl;
+			if((item1 >> 8) | 0){ //second partition
+				if(seg_id == 2)
+					printf("%d -- %d\n", item1, (item1 & clear_vec));
+				second_part[p2_ind++] = (uint8_t) (item1 & clear_vec);
+				if(seg_id == 2)
+					printf("==> %d \n\n", second_part[p2_ind - 1]);
+			}
+			else{
+				first_part[p1_ind++] = (uint8_t) item1;
+			}
+
+			if((item2 >> 8) | 0){
+				second_part[p2_ind++] = (uint8_t) (item2 & clear_vec);
+			}
+			else{
+				first_part[p1_ind++] = (uint8_t) item2;
+			}
+
+			if((item3 >> 8) | 0){
+				second_part[p2_ind++] = (uint8_t) (item3 & clear_vec);
+			}
+			else{
+				first_part[p1_ind++] = (uint8_t) item3;
+			}
+
+			if((item4 >> 8) | 0){
+				second_part[p2_ind++] = (uint8_t) (item4 & clear_vec);
+			}
+			else{
+				first_part[p1_ind++] = (uint8_t) item4;
+			}
+		}
+		printf("Segment %d\n", seg_id);
+		printf("Total items: first_part: %d, second_part: %d\n\n", p1_ind, p2_ind);
+
+		cout << "Vals in first part:" << endl;
+		for(int i = 0; i < p1_ind; i++){
+			printf("%d - ", first_part[i]);
+		}
+		printf("\n");
+
+		cout << "Vals in second part:" << endl;
+		for(int i = 0; i < p2_ind; i++){
+			printf("%d - ", second_part[i]);
+		}
+		printf("\n\n");
+	}
+}
+
+
 void DataCompressor::calculateBitSizes() {
 	int n_bits = 0;
 	int base_col = 0;
@@ -427,15 +565,11 @@ void DataCompressor::calculateBitSizes() {
 	if(t.t_meta.isFact){
 		printf("Calculating bit sizes\n");
 	}
-	for (int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts;
-			col++) {
+	for (int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts; col++) {
 		base_col = col % t.t_meta.num_of_columns;
 
-		if (t.t_meta.isFact && t.columns[base_col].c_meta.isFK){
-			printf("Skipping FK column %d\n", base_col);
-			continue;
-		}
-		else if (t.columns[col].encoder.num_of_bits != -1){
+		if (t.t_meta.isFact && t.columns[col].c_meta.isFK){
+			//printf("Skipping FK column %d\n", col);
 			continue;
 		}
 		else {
@@ -463,17 +597,28 @@ void DataCompressor::calculateBitSizes() {
 	}
 }
 
+/*co-partition at this level?*/
 void DataCompressor::compress() {
-	column *cur_col;
-	for (int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts;
-			col++) {
-		cur_col = &(t.columns[col]);
+	int total_col_parts = t.t_meta.num_of_columns * t.t_meta.num_of_parts;
+	for (int col = 0; col < total_col_parts; col++) {
+		column &cur_col = t.columns[col];
 
-		int num_of_segments = cur_col->c_meta.num_of_segments;
-		//int compLines = getCompLines(part_id); // gets segment size for that partition
-		int c_size = num_of_segments * (cur_col->encoder.num_of_bits + 1);
-		cur_col->compressed = new uint64_t[c_size]();
-		bit_compression(*cur_col);
+		int num_of_segments = cur_col.c_meta.num_of_segments;
+		int c_size = num_of_segments * (cur_col.encoder.num_of_bits + 1);
+
+		cur_col.compressed = new uint64_t[c_size]();
+		bit_compression(cur_col);
+
+		/*
+		if(cur_col.c_meta.isFK){
+			cout << "FK col " << col << " is encoded with " << cur_col.encoder.num_of_bits << "bits!" <<endl;
+			cout << num_of_segments << endl;
+			cur_col.co_partitioned = new uint16_t[c_size * 2]();
+
+			//co_partition(cur_col);
+			co_partition_test(cur_col);
+		}*/
+
 		//bw_compression(*cur_col);
 	}
 }

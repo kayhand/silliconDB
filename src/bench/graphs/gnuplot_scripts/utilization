@@ -1,0 +1,30 @@
+#set term png
+set terminal postscript enhanced color
+set output 'util.eps'
+
+#set output 'util.png'
+
+set key off
+
+set title "SiliconDB" 
+set xlabel "time (ns)"
+set grid xtics ytics
+
+#set xrange [0:50]
+set yrange [0:30]
+set ytics ("DAX" 5, "Core1" 10, "Core2" 15, "Core3" 20, "Core4" 25)
+
+plot 'dax.dat' using 2:1 with steps lw 6 lc rgb "red", \
+"core_0.dat" using 2:1 with steps lw 6 lc rgb "red", \
+"core_1.dat" using 2:1 with steps lw 6 lc rgb "red", \
+"core_2.dat" using 2:1 with steps lw 6 lc rgb "red", \
+"core_3.dat" using 2:1 with steps lw 6 lc rgb "red", \
+"dax.dat" using 3:1 with steps lw 6 linecolor rgb "#000080", \
+"core_0.dat" using 3:1 with steps lw 6 lc rgb "#000080", \
+"core_1.dat" using 3:1 with steps lw 6 lc rgb "#000080", \
+"core_2.dat" using 3:1 with steps lw 6 lc rgb "#000080", \
+"core_3.dat" using 3:1 with steps lw 6 lc rgb "#000080", \
+"core_0.dat" using 4:1 with steps lw 6 lc rgb "#2E8B57", \
+"core_1.dat" using 4:1 with steps lw 6 lc rgb "#2E8B57", \
+"core_2.dat" using 4:1 with steps lw 6 lc rgb "#2E8B57", \
+"core_3.dat" using 4:1 with steps lw 6 lc rgb "#2E8B57"

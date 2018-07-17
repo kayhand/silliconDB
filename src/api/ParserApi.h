@@ -41,13 +41,14 @@ struct ssb_table{
 	int t_id;
 	string tableName;
 	bool isFact = false;
+	bool hasFilter = false;
 
-	query_predicate q_pred;
+	vector<query_predicate> q_preds;
 	string groupByKey;
 	string groupByValue;
 
-	int groupByKeyId;
-	int groupByValueId;
+	int groupByKeyId = -1;
+	int groupByValueId = -1;
 
 	vector<string> joinColumns; //customer, date, supplier
 	unordered_map<int, int> joinColumnIds;
@@ -75,22 +76,24 @@ private:
 		{"lineorder", -1},
 		{"supplier", 0},
 		{"customer", 1},
-		{"date", 2},
-		{"part", 3}
+		{"part", 2},
+		{"date", 3}
 	};
 
 	std::unordered_map<int, JOB_TYPE> t_scan_type{
+		{-2, JOB_TYPE::LO_SCAN_2},
 		{-1, JOB_TYPE::LO_SCAN},
 		{0, JOB_TYPE::S_SCAN},
 		{1, JOB_TYPE::C_SCAN},
-		{2, JOB_TYPE::D_SCAN},
-		{3, JOB_TYPE::P_SCAN}
+		{2, JOB_TYPE::P_SCAN},
+		{3, JOB_TYPE::D_SCAN}
 	};
 
 	std::unordered_map<int, JOB_TYPE> t_join_type{
 		{0, JOB_TYPE::LS_JOIN},
 		{1, JOB_TYPE::LC_JOIN},
-		{2, JOB_TYPE::LD_JOIN}
+		{2, JOB_TYPE::LP_JOIN},
+		{3, JOB_TYPE::LD_JOIN}
 	};
 
 	//query_api_wrapper q_api;
@@ -135,13 +138,20 @@ public:
     	ssb_table ssb_t;
 
     	vector<int> fkColIds;
+    	bool started = false;
     	while(getline(file, curLine)){
-    		//printf("curline: %s\n", curLine.c_str());
     		if(curLine == "START"){
-    			cout << "Start of relation!" << endl;
+    			started = true;
+    			//cout << "Start of relation!" << endl;
     		}
     		else if(curLine == "END"){
-    		    cout << "End of relation!" << endl;
+    			if(started == false){
+    				cout << "END keyword without a START!" << endl;
+    				exit(0);
+    			}
+    			else{
+    				started = false;
+    			}
 
     		    if(ssb_t.isFact)
     		    	factRelation = ssb_t;
@@ -170,9 +180,13 @@ public:
       				ssb_t.joinColumnIds.reserve(DimRelations().size());
     			}
     			else if(paramKey == "predicates"){
-    				ssb_t.q_pred = parsePredicate(paramValue);
-    				ssb_t.q_pred.columnId = ssb_t_meta.TableColId(ssb_t.tableName, ssb_t.q_pred.column);
-    				ssb_t.q_pred.columnType = ssb_t_meta.TableColType(ssb_t.tableName, ssb_t.q_pred.columnId);
+    				query_predicate new_pred;
+    				new_pred = parsePredicate(paramValue);
+    				new_pred.columnId = ssb_t_meta.TableColId(ssb_t.tableName, new_pred.column);
+    				new_pred.columnType = ssb_t_meta.TableColType(ssb_t.tableName, new_pred.columnId);
+
+    				ssb_t.hasFilter = true;
+    				ssb_t.q_preds.push_back(new_pred);
     			}
     			else if(paramKey == "groupByColumn"){
     				ssb_t.groupByKey = paramValue;
@@ -189,8 +203,6 @@ public:
 
     				string joinColumn = paramValue.substr(sPos + 1); //lo_custkey
 
-    				//cout << joinColumn << " " << ssb_t_meta.TableColId(ssb_t.tableName, joinColumn);
-    				//cout << endl;
     				ssb_t.joinColumns.push_back(joinColumn);
     				ssb_t.joinColumnIds[dim_t_id] =
     						ssb_t_meta.TableColId(ssb_t.tableName, joinColumn);
@@ -205,8 +217,8 @@ public:
 		int lPos;
 		int cPos1, cPos2;
 		if((lPos = predStr.find(" AND ")) != -1){
-			string firstPred = predStr.substr(0, lPos); //d_year > 1991
-			string secondPred = predStr.substr(lPos + 1); //d_year <= 1997
+			string firstPred = predStr.substr(0, lPos); //lo_quantity > 25
+			string secondPred = predStr.substr(lPos + 1); //lo_quantity <= 35
 
 			if((cPos1 = firstPred.find(" > ")) && (cPos2 = secondPred.find(" <= "))){
 				q_pred.comparison = dax_compare_t::DAX_GT_AND_LE;
@@ -215,9 +227,9 @@ public:
 				cout << "Error parsing string " << predStr << "!" << endl;
 				exit(-1);
 			}
-			q_pred.column = firstPred.substr(0, cPos1); //d_year
+			q_pred.column = firstPred.substr(0, cPos1); //lo_quantity
 			q_pred.params[0] = firstPred.substr(cPos1 + 3); //1991
-			q_pred.params[1] = secondPred.substr(cPos2 + 3); //1997
+			q_pred.params[1] = secondPred.substr(cPos2 + 4); //1997
 		}
 		else if((lPos = predStr.find(" OR ")) != -1){
 			string firstPred = predStr.substr(0, lPos); //d_year > 1991
@@ -255,10 +267,9 @@ public:
 		return q_pred;
 	}
 
-
     void printQueryInfo(){
     	cout << dimRelations.size() << " dimension tables in current query" << endl;
-
+    	dimRelations[factRelation.t_id] = factRelation;
     	for(auto &curr : dimRelations){
     		ssb_table ssb_t = curr.second;
     		cout << "==========" << endl;
@@ -280,11 +291,16 @@ public:
     			cout << endl;
     		}
 
-    		if(ssb_t.q_pred.column != ""){
-    			ssb_t.q_pred.printPred();
+    		for(query_predicate pred : ssb_t.q_preds){
+    			if(pred.column != ""){
+    				pred.printPred();
+    			}
     		}
     		cout << "==========" << endl;
     	}
+    	dimRelations.erase(factRelation.t_id);
+    	cout << dimRelations.size() << " dimension tables in current query" << endl;
+
     }
 };
 

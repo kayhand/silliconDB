@@ -19,59 +19,45 @@ extern "C" {
 
 class AggApi {
 private:
-	table *factTable;
+	ScanApi *factScan;
 	std::vector<JoinApi*> joins;
 
-	//vector<vector<int>> aggKeyMap2D;
-	vector<vector<vector<int>>> aggKeyMap3D;
+	vector<vector<vector<int>>> aggKeyMap;
 
 	void initializeAgg() {
-		table_meta *t1 = &(joins[0]->dimensionScan->getBaseTable()->t_meta); //customer
-		table_meta *t2 = &(joins[1]->dimensionScan->getBaseTable()->t_meta); //supplier
-		table_meta *t3 = &(joins[2]->dimensionScan->getBaseTable()->t_meta); //date
+		vector<int> key_sizes {1, 1, 1};
 
-		int keys1 = t1->groupByKeys.size();
-		int keys2 = t2->groupByKeys.size();
-		int keys3 = t3->groupByKeys.size();
+		int curDim = 0;
+		for(JoinApi *curJoin : joins){
+			table_meta &t_meta = (curJoin->dimensionScan->getBaseTable()->t_meta);
+			if(t_meta.hasAggKey){
+				int key_size = t_meta.groupByKeys.size();
+				key_sizes[curDim++] = key_size;
+			}
+		}
+		cout << key_sizes[0] << " -- " << key_sizes[1] << " -- " << key_sizes[2] << endl;
 
-		vector<int> vec3(keys3, -1);
-		vector<vector<int>> vec2(keys2, vec3);
+		vector<int> vec3(key_sizes[2], -1); //aggKeyMap1D
+		vector<vector<int>> vec2(key_sizes[1], vec3); //aggKeyMap2D
+		aggKeyMap.resize(key_sizes[0], vec2);
 
-		//aggKeyMap2D.resize(keys1, vec3);
-		aggKeyMap3D.resize(keys1, vec2);
-
-		//int id_2D = 0;
+		int id_1D = 0;
+		int id_2D = 0;
 		int id_3D = 0;
-		for (int i = 0; i < keys1; i++) {
-			for (int j = 0; j < keys2; j++) {
-				//aggKeyMap2D[i][j] = id_2D++;
-				for (int k = 0; k < keys3; k++) {
-					aggKeyMap3D[i][j][k] = id_3D++;
+		for (int i = 0; i < key_sizes[0]; i++) {
+			aggKeyMap[i][0][0] = id_1D++;
+			for (int j = 0; j < key_sizes[1]; j++) {
+				aggKeyMap[i][j][0] = id_2D++;
+				for (int k = 0; k < key_sizes[2]; k++) {
+					aggKeyMap[i][j][k] = id_3D++;
 				}
 			}
 		}
-
-		/*std::cout << "Customer nation keys: " << endl;
-		for (auto &keyValue : t1->groupByKeys) {
-			int key = keyValue.first;
-			std::cout << key << " ";
-		}
-		std::cout << std::endl;
-		std::cout << std::endl;*/
-
-		/*std::cout << "Composite keys mapping" << std::endl;
-		 for (int i = 0; i < keys1; i++) {
-		 	 for (int j = 0; j < keys2; j++) {
-		 	 	 for (int k = 0; k < keys3; k++) {
-		 	 	 	 cout << "(" << i << ", " << j << ", " << k << ") -> " << aggKeyMap[i][j][k] << endl;
-		 	 	 }
-		 	 }
-		 }*/
 	}
 
 public:
-	AggApi(table *factTable, std::vector<JoinApi*> &joins) {
-		this->factTable = factTable;
+	AggApi(ScanApi *factScan, std::vector<JoinApi*> &joins) {
+		this->factScan = factScan;
 		this->joins = joins;
 
 		initializeAgg();
@@ -91,7 +77,7 @@ public:
 	}
 
 	table* FactTable(){
-		return this->factTable;
+		return this->factScan->getBaseTable();
 	}
 
 	int TotalJoins(){
@@ -103,6 +89,8 @@ public:
 	}
 
 	void agg(Node<Query>* node, Result *result);
+	void agg_q1(Node<Query>* node, Result *result);
+	void agg_q4(Node<Query>* node, Result *result);
 };
 
 #endif

@@ -6,17 +6,24 @@
 #include <sys/time.h>
 
 //#ifdef __sun
-void ScanApi::hwScan(dax_queue_t **queue, Node<Query>* node) {
+bool ScanApi::hwScan(dax_queue_t **queue, Node<Query>* node) {
 	int curPart = node->value.getPart();
+
 	int ind = colId + (curPart) * baseTable->t_meta.num_of_columns;
 	column *col = &(baseTable->columns[ind]);
 	int num_of_els = col->c_meta.col_size;
+
+	if (hasFilter == false){
+		uint64_t* bit_vector = (uint64_t*) getFilterBitVector(curPart);
+		memset(bit_vector, 255, num_of_segments * 8);
+		return false;
+	}
 
 	this->src.data = col->compressed;
 	this->src.elements = num_of_els;
 	this->dst.elements = num_of_els;
 
-	void* bit_vector = getFilterBitVector(curPart * this->num_of_segments);
+	void* bit_vector = getFilterBitVector(curPart);
 	dst.data = bit_vector;
 
 	node->t_start = gethrtime();
@@ -34,14 +41,21 @@ void ScanApi::hwScan(dax_queue_t **queue, Node<Query>* node) {
 	if(scan_status != 0)
 		printf("Dax Error during scan! %d\n", scan_status);
 	//printf("Dax (%d), (%d)\n", curPart, node->value.getJobType());
+	return true;
 }
 //#endif
 
-void ScanApi::simdScan16(Node<Query>* node, Result *result) {
+bool ScanApi::simdScan16(Node<Query>* node, Result *result) {
 	int curPart = node->value.getPart();
 	int t_id = baseTable->t_meta.t_id;
 	int ind = colId + (curPart) * baseTable->t_meta.num_of_columns;
 	column *col = &(baseTable->columns[ind]);
+
+	if (hasFilter == false){
+		uint64_t* bit_vector = (uint64_t*) getFilterBitVector(curPart);
+		memset(bit_vector, 255, num_of_segments * 8);
+		return false;
+	}
 
 	v4hi data_vec = { 0, 0, 0, 0 };
 	v4hi converted_pred1 = { 0, 0, 0, 0 };
@@ -53,9 +67,11 @@ void ScanApi::simdScan16(Node<Query>* node, Result *result) {
 	uint64_t cur_result = 0;
 	int count = 0;
 	int total_lines = col->encoder.num_of_bits + 1;
+	if(total_lines > 16){
+		printf("Yeah part scan\n");
+	}
 
-	uint64_t* bit_vector = (uint64_t*) getFilterBitVector(
-			curPart * this->num_of_segments);
+	uint64_t* bit_vector = (uint64_t*) getFilterBitVector(curPart);
 	int extra_vals = (col->c_meta.num_of_segments * 64) - col->c_meta.col_size;
 
 	//if(extra_vals > 0){
@@ -108,6 +124,7 @@ void ScanApi::simdScan16(Node<Query>* node, Result *result) {
 		cur_result = 0;
 	}
 	t_end = gethrtime();
+	this->partsDone++;
 
 	if (cmp == dax_compare_t::DAX_LE && extra_vals > 0) {
 		count -= cnt;
@@ -121,5 +138,6 @@ void ScanApi::simdScan16(Node<Query>* node, Result *result) {
 
 	//if(extra_vals > 0)
 	//printBitVector(bit_vector, col->c_meta.num_of_segments, clear_vector);
+	return true;
 }
 

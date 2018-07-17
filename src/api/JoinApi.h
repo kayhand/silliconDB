@@ -19,7 +19,6 @@ extern "C" {
 
 class JoinApi {
 private:
-	//ScanApi *factScan; //left relation
 	table *factTable;
 	ScanApi *dimensionScan; //right relation
 
@@ -41,12 +40,13 @@ private:
 
 	void reserveBitVector() {
 		this->block_size = factTable->t_meta.num_of_segments * 8;
-		posix_memalign(&join_vector, 64, block_size);
+		posix_memalign(&join_vector, 4096, block_size);
 	}
 
 	friend class AggApi;
 
 public:
+
 	JoinApi(table *factTable, ScanApi *dimScan, int joinColId, JOB_TYPE j_type) {
 		this->factTable = factTable;
 		this->dimensionScan = dimScan;
@@ -74,8 +74,8 @@ public:
 		memset(&bit_map, 0, sizeof(dax_vec_t));
 		memset(&dst, 0, sizeof(dax_vec_t));
 
-		src.format = DAX_BITS;
 		src.elem_width = (&factTable->columns[joinColId])->encoder.num_of_bits + 1;
+		src.format = DAX_BITS;
 
 		bit_map.format = DAX_BITS;
 		bit_map.elem_width = 1;
@@ -86,6 +86,8 @@ public:
 		dst.elem_width = 1;
 
 		flag = DAX_CACHE_DST;
+
+		cout << "Dim. table ("<< dimensionScan->baseTable->t_meta.t_id << ") (" << joinColId << ") " << src.elem_width << endl;
 	}
 
 	int numOfParts() {
@@ -97,9 +99,9 @@ public:
 		return (static_cast<uint64_t*>(join_vector)) + offset;
 	}
 
-
 	void hwJoin(dax_queue_t**, Node<Query>*);
-	void swJoin(Node<Query>* node, Result *result);
+	void swJoin(Node<Query>*, Result*);
+	void swJoin32(Node<Query>*, Result*);
 
 	void printBitVector(uint64_t cur_result, int segId) {
 		//print bit vals
@@ -136,13 +138,33 @@ public:
 
 	}
 
-	bool bitAtPosition(uint64_t* bit_map, int bit_pos) {
-		//printf("bit_pos: %d\n", bit_pos);
+	bool bitAtPosition(uint32_t bit_pos) {
 		int arr_ind = bit_pos / 64;
 		int local_pos = 63 - (bit_pos % 64);
 
-		uint64_t localVector = bit_map[arr_ind];
-		return (localVector >> local_pos) & 1;
+		uint64_t localVector = bit_map_res[arr_ind];
+		bool res = (localVector >> local_pos) & 1;
+		return res;
+	}
+
+	bool bitAtPosition(uint16_t bit_pos) {
+		int arr_ind = bit_pos / 64;
+		int local_pos = 63 - (bit_pos % 64);
+
+		uint64_t localVector = bit_map_res[arr_ind];
+		bool res = (localVector >> local_pos) & 1;
+		return res;
+	}
+
+	int bitsAtWord(uint64_t &cur_line, int &num_of_items) {
+		uint32_t cur_pos;
+		int result = 0;
+		for(int item_id = num_of_items; item_id > 0; item_id--){
+			result <<= 1;
+			cur_pos = cur_line >> (src.elem_width * (item_id - 1));
+			result |= bitAtPosition(cur_pos);
+		}
+		return result;
 	}
 
 	int JoinColId(){
@@ -151,6 +173,10 @@ public:
 
 	ScanApi* DimensionScan(){
 		return this->dimensionScan;
+	}
+
+	JOB_TYPE &JoinType(){
+		return j_type;
 	}
 
 };

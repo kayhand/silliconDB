@@ -11,6 +11,7 @@
 class Syncronizer {
 	pthread_barrier_t start_barrier;
 	pthread_barrier_t join_barrier;
+	pthread_barrier_t join_end_barrier; //for data division
 	pthread_barrier_t agg_barrier;
 	pthread_barrier_t end_barrier;
 
@@ -23,6 +24,7 @@ public:
 	void initBarriers(int num_of_workers) {
 		pthread_barrier_init(&start_barrier, NULL, num_of_workers);
 		pthread_barrier_init(&join_barrier, NULL, num_of_workers);
+		pthread_barrier_init(&join_end_barrier, NULL, num_of_workers);
 		pthread_barrier_init(&agg_barrier, NULL, num_of_workers);
 		pthread_barrier_init(&end_barrier, NULL, num_of_workers);
 	}
@@ -47,6 +49,10 @@ public:
 		pthread_barrier_wait(&join_barrier);
 	}
 
+	void waitOnJoinEndBarrier() {
+		pthread_barrier_wait(&join_barrier);
+	}
+
 	void waitOnAggBarrier() {
 		pthread_barrier_wait(&agg_barrier);
 	}
@@ -58,6 +64,7 @@ public:
 	void destroyBarriers() {
 		pthread_barrier_destroy(&start_barrier);
 		pthread_barrier_destroy(&join_barrier);
+		pthread_barrier_destroy(&join_end_barrier);
 		pthread_barrier_destroy(&agg_barrier);
 		pthread_barrier_destroy(&end_barrier);
 	}

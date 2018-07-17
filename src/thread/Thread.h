@@ -53,14 +53,13 @@ class Thread {
 	pthread_t tid;
 	int running;
 	int detached;
-	int pid;
 
 	int nextSlot = 0;
 	std::vector<Node<Query>*> node_pool;
 
 public:
 	Thread() :
-			tid(0), running(0), detached(0), pid(0), nextSlot(0){
+			tid(0), running(0), detached(0), nextSlot(0){
 	}
 
 	virtual ~Thread() {
@@ -92,14 +91,6 @@ public:
 				setAffinity(cpuid * 8);
 		}
 		return result;
-	}
-
-	void setId(int p_id) {
-		pid = p_id;
-	}
-
-	int getId() {
-		return pid;
 	}
 
 	void exit() {

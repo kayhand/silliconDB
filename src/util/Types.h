@@ -9,14 +9,17 @@
 #include <sys/time.h>
 
 enum JOB_TYPE{
+	LO_SCAN_2 = -2,
 	LO_SCAN = -1,
 	S_SCAN,
 	C_SCAN,
-	D_SCAN,
 	P_SCAN,
+	D_SCAN_2 = 3,
+	D_SCAN = 4,
 	LS_JOIN = 11,
-	LC_JOIN,
-	LD_JOIN,
+	LC_JOIN = 12,
+	LP_JOIN = 13,
+	LD_JOIN = 14,
 	AGG = 21
 };
 
@@ -40,5 +43,3 @@ unsigned long gethrtime(void) {
 #endif
 
 #endif
-
-

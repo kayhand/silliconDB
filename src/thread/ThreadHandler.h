@@ -33,8 +33,7 @@ class ThreadHandler: public Thread<T> {
 protected:
 	Syncronizer* thr_sync;
 	EXEC_TYPE eType;
-
-	std::atomic<bool> daxDone = ATOMIC_VAR_INIT(false);
+	int thr_id = -1;
 
 	WorkQueue<T>* shared_queue = NULL;
 	WorkQueue<T>* hw_queue = NULL;
@@ -44,9 +43,10 @@ protected:
 	std::vector<DataCompressor*> dataVector;
 	Result result;
 
-	ScanApi* factScanAPI = NULL;
-	std::vector<ScanApi*> dimScanAPIs;
-	std::vector<JoinApi*> joinAPIs;
+	ScanApi *factScanAPI = NULL;
+	ScanApi *factScanAPI2 = NULL;
+	unordered_map<int, ScanApi*> dimScanAPIs;
+	unordered_map<int, JoinApi*> joinAPIs;
 	AggApi *api_agg = NULL;
 
 	virtual void siliconDB() = 0;
@@ -54,14 +54,35 @@ protected:
 	virtual void dataDivision() = 0;
 
 public:
-	ThreadHandler(Syncronizer *sync, EXEC_TYPE e_type) {
-		thr_sync = sync;
+	ThreadHandler(Syncronizer *sync, EXEC_TYPE e_type, int thr_id) {
+		this->thr_sync = sync;
 		this->eType = e_type;
+		this->thr_id = thr_id;
+
+		result.setThreadId(thr_id);
+	}
+
+	int getId() {
+		return this->thr_id;
 	}
 
 	void addNewJob(int r_id, int p_id, JOB_TYPE j_type, WorkQueue<T> *queue) {
 		Node<T> *newNode = this->returnNextNode(r_id, p_id, j_type);
 		queue->add(newNode);
+	}
+
+	void addNewJoins(int p_id, WorkQueue<T> *work_queue){
+		for(auto &curPair : joinAPIs){
+			JoinApi *curJoin = curPair.second;
+			if(curJoin->JoinType() == LP_JOIN){
+				//printf("Adding lo-p join to the sw-only queue...\n");
+				this->addNewJob(0, p_id, LP_JOIN, this->sw_queue);
+			}
+			else{
+				this->addNewJob(0, p_id, curJoin->JoinType(), work_queue);
+			}
+		}
+		//work_queue->printQueue();
 	}
 
 	Result &getResult() {
@@ -78,12 +99,22 @@ public:
 		this->hw_queue = hw_queue;
 	}
 
-	void setAPIs(ScanApi* factScan, std::vector<ScanApi*> &dimScans,
+	void setAPIs(std::vector<ScanApi*> factScans, std::vector<ScanApi*> &dimScans,
 			std::vector<JoinApi*> &joinAPIs, AggApi* aggAPI) {
 
-		this->factScanAPI = factScan;
-		this->dimScanAPIs = dimScans;
-		this->joinAPIs = joinAPIs;
+		factScanAPI = factScans[0];
+		if(factScans.size() == 2){
+			factScanAPI2 = factScans[1];
+		}
+
+		for(ScanApi *curScan : dimScans){
+			this->dimScanAPIs[curScan->Type()] = curScan;
+		}
+
+		for(JoinApi *curJoin : joinAPIs){
+			this->joinAPIs[curJoin->JoinType()] = curJoin;
+		}
+
 		this->api_agg = aggAPI;
 	}
 

@@ -30,9 +30,10 @@ class DaxHandler: public ThreadHandler<T> {
 		printf("Start Items: %d\n", this->q_size);
 		Node<T> *node_item;
 		JOB_TYPE j_type;
-		//int p_id = -1;
 
-		//return;
+		bool hasFilter = true;
+		int p_id;
+
 		while (this->shared_queue->getHead() != this->shared_queue->getTail()) {
 			for (int i = 0; i < items_done; i++) {
 				if (this->shared_queue->getHead() != this->shared_queue->getTail()) {
@@ -43,18 +44,32 @@ class DaxHandler: public ThreadHandler<T> {
 					}
 					j_type = node_item->value.getJobType();
 					if(j_type == JOB_TYPE::LO_SCAN){
-						//printf("fact scan...\n");
-						this->factScanAPI->hwScan(&dax_queue, node_item);
+						hasFilter = this->factScanAPI->hwScan(&dax_queue, node_item);
 					}
-					else if(j_type <= JOB_TYPE::P_SCAN){
-						//printf("Join (%d)\n", j_type);
-						this->dimScanAPIs[j_type]->hwScan(&dax_queue, node_item);
+					else if (j_type == JOB_TYPE::LO_SCAN_2) {
+						hasFilter = this->factScanAPI2->hwScan(&dax_queue, node_item);
 					}
-					else if(j_type <= JOB_TYPE::LD_JOIN){
+					else if (j_type >= S_SCAN && j_type <= D_SCAN) {
+						//printf("Scan (%d)\n", j_type);
+						hasFilter = this->dimScanAPIs[j_type]->hwScan(&dax_queue, node_item);
+					}
+					else if (j_type >= LS_JOIN && j_type <= LD_JOIN) {
 						//printf("Join (%d)\n", j_type);
-						this->joinAPIs[j_type - 11]->hwJoin(&dax_queue, node_item);
+						this->joinAPIs[j_type]->hwJoin(&dax_queue, node_item);
+					}
+
+					if(hasFilter == false){
+						i--;
+						if(j_type == LO_SCAN){
+							p_id = node_item->value.getPart();
+							this->addNewJoins(p_id, this->shared_queue);
+						}
+						hasFilter = true;
 					}
 					//this->shared_queue->printQueue();
+				}
+				else{
+					break;
 				}
 			}
 
@@ -76,7 +91,7 @@ class DaxHandler: public ThreadHandler<T> {
 			}
 		}
 
-		printf("DAX DONE! (%d), %d\n", items_done, (int) this->daxDone);
+		printf("DAX DONE! (%d)\n", items_done);
 		this->thr_sync->waitOnAggBarrier();
 	}
 
@@ -89,7 +104,9 @@ class DaxHandler: public ThreadHandler<T> {
 		int items_done = this->q_size;
 		Node<T> *node_item;
 		int j_type = -1;
-		//int p_id = -1;
+
+		bool hasFilter = true;
+		int p_id;
 
 		while (scan_queue->getHead() != scan_queue->getTail()) {
 			for (int i = 0; i < items_done; i++) {
@@ -101,17 +118,33 @@ class DaxHandler: public ThreadHandler<T> {
 					}
 					j_type = node_item->value.getJobType();
 					if(j_type == JOB_TYPE::LO_SCAN){
-						this->factScanAPI->hwScan(&dax_queue, node_item);
+						hasFilter = this->factScanAPI->hwScan(&dax_queue, node_item);
+						if(!hasFilter){
+							//printf("Fact scan\n");
+							p_id = node_item->value.getPart();
+							this->addNewJoins(p_id, join_queue);
+							i--;
+						}
 					}
-					else if(j_type <= JOB_TYPE::P_SCAN){
-						this->dimScanAPIs[j_type]->hwScan(&dax_queue, node_item);
+					else if(j_type == JOB_TYPE::LO_SCAN_2){
+						this->factScanAPI2->hwScan(&dax_queue, node_item);
+					}
+					else if(j_type <= JOB_TYPE::D_SCAN){
+						hasFilter = this->dimScanAPIs[j_type]->hwScan(&dax_queue, node_item);
+						if(!hasFilter){
+							i--;
+							this->dimScanAPIs[j_type]->PartDone();
+						}
 					}
 					//scan_queue->printQueue();
+				}
+				else{
+					break;
 				}
 			}
 
 			dax_poll_t poll_data[this->q_size];
-			items_done = dax_poll(dax_queue, poll_data, -1, 0);
+			items_done = dax_poll(dax_queue, poll_data, this->q_size, 0);
 			if (items_done > 0) {
 				handlePollReturn(items_done, poll_data, join_queue);
 			}
@@ -128,6 +161,7 @@ class DaxHandler: public ThreadHandler<T> {
 		printf("DAX SCANS DONE, JOINS STARTING...\n");
 
 		join_queue->printQueue();
+
 		items_done = this->q_size;
 		while (join_queue->getHead() != join_queue->getTail()) {
 			for (int i = 0; i < items_done; i++) {
@@ -138,17 +172,19 @@ class DaxHandler: public ThreadHandler<T> {
 						continue;
 					}
 					j_type = node_item->value.getJobType();
+					//printf("Join with id: %d\n", j_type);
 					if(j_type <= JOB_TYPE::LD_JOIN){
-						this->joinAPIs[j_type - 11]->hwJoin(&dax_queue, node_item);
+						this->joinAPIs[j_type]->hwJoin(&dax_queue, node_item);
 					}
 				}
 			}
 
 			dax_poll_t poll_data[this->q_size];
-			items_done = dax_poll(dax_queue, poll_data, -1, 0);
+			items_done = dax_poll(dax_queue, poll_data, this->q_size, 0);
 			if (items_done > 0) {
 				handlePollReturn(items_done, poll_data, join_queue);
 			}
+			//join_queue->printQueue();
 		}
 
 		items_done = 0;
@@ -159,7 +195,7 @@ class DaxHandler: public ThreadHandler<T> {
 				handlePollReturn(items_done, poll_data, join_queue);
 			}
 		}
-		printf("DAX JOINS DONE! (%d), %d\n", items_done, (int) this->daxDone);
+		printf("DAX JOINS DONE! (%d)\n", items_done);
 		this->thr_sync->waitOnAggBarrier();
 	}
 
@@ -169,7 +205,7 @@ class DaxHandler: public ThreadHandler<T> {
 		int items_done = this->q_size;
 		Node<T> *node_item;
 		int j_type = -1;
-		//int p_id = -1;
+		bool hasFilter = true;
 
 		while (this->hw_queue->getHead() != this->hw_queue->getTail()) {
 			for (int i = 0; i < items_done; i++) {
@@ -180,12 +216,23 @@ class DaxHandler: public ThreadHandler<T> {
 						continue;
 					}
 					j_type = node_item->value.getJobType();
+
 					if(j_type == JOB_TYPE::LO_SCAN){
-						this->factScanAPI->hwScan(&dax_queue, node_item);
+						hasFilter = this->factScanAPI->hwScan(&dax_queue, node_item);
 					}
-					else if(j_type <= JOB_TYPE::P_SCAN){
-						this->dimScanAPIs[j_type]->hwScan(&dax_queue, node_item);
+					else if(j_type == JOB_TYPE::LO_SCAN_2){
+						hasFilter = this->factScanAPI2->hwScan(&dax_queue, node_item);
 					}
+					else if(j_type <= JOB_TYPE::D_SCAN){
+						hasFilter = this->dimScanAPIs[j_type]->hwScan(&dax_queue, node_item);
+					}
+					if(hasFilter == false){
+						i--;
+					}
+					//this->hw_queue->printQueue();
+				}
+				else{
+					break;
 				}
 			}
 
@@ -212,34 +259,38 @@ class DaxHandler: public ThreadHandler<T> {
 			} else {
 				int totalFactParts = this->factScanAPI->totalParts();
 				int totalJoinItems = this->api_agg->TotalJoins() * totalFactParts;
-				int daxJoins = totalJoinItems / (1.70 + 1) * 1.70;
+
+				int coreJoins = (int) ceil(totalJoinItems / (1.70 + 1) * 1.70);
+				int daxJoins = totalJoinItems - coreJoins;
 
 				printf("Dax will do %d joins out of %d in total!\n", daxJoins, totalJoinItems);
 
 				int p_id, j_id;
+				int ind = 0;
 				JOB_TYPE j_type;
-				for(int ind = 0; ind < totalJoinItems; ind++){
-					p_id = ind % totalFactParts; //parj_type
-					j_id = ind / totalFactParts; //join_id
+				while(ind < totalJoinItems){
+					p_id = ind % totalFactParts; //partition_id
+					j_id = ind / totalFactParts; //join_type
 
-					if(j_id == 0)
-						j_type = JOB_TYPE::LC_JOIN;
-					else if(j_id == 1)
-						j_type = JOB_TYPE::LS_JOIN;
-					else if(j_id == 2)
-						j_type = JOB_TYPE::LD_JOIN;
-
-					if(ind < daxJoins)
-						this->addNewJob(0, p_id, j_type, this->hw_queue);
-					else
+					j_type = this->api_agg->Joins()[j_id]->JoinType();
+					if(j_type == LP_JOIN || coreJoins > 0){
 						this->addNewJob(0, p_id, j_type, this->sw_queue);
+						coreJoins--;
+					}
+					else{
+						this->addNewJob(0, p_id, j_type, this->hw_queue);
+						daxJoins--;
+					}
+					ind++;
 				}
+				cout << coreJoins << " " << daxJoins << endl;
 
-				/*printf("DAX Join Queue\n");
+				printf("\nDAX Join Queue\n");
 				this->hw_queue->printQueue();
 
-				printf("Core Join Queue\n");
-				this->sw_queue->printQueue();*/
+				printf("\nCore Join Queue\n");
+				this->sw_queue->printQueue();
+
 				break;
 			}
 		}
@@ -257,7 +308,7 @@ class DaxHandler: public ThreadHandler<T> {
 					}
 					j_type = node_item->value.getJobType();
 					if(j_type <= JOB_TYPE::LD_JOIN){
-						this->joinAPIs[j_type - 11]->hwJoin(&dax_queue, node_item);
+						this->joinAPIs[j_type]->hwJoin(&dax_queue, node_item);
 					}
 				}
 			}
@@ -277,27 +328,22 @@ class DaxHandler: public ThreadHandler<T> {
 				handlePollReturn(items_done, poll_data, NULL);
 			}
 		}
+
 		printf("Dax done with joins!\n");
+		this->thr_sync->waitOnJoinEndBarrier();
 
-		while (true) {
-			if (this->sw_queue->getHead() != this->sw_queue->getTail()) {
-				continue;
-			} else {
-				int totalFactParts = this->factScanAPI->totalParts();
-				for(int p_id = 0; p_id < totalFactParts; p_id++)
-					this->addNewJob(0, p_id, JOB_TYPE::AGG, this->sw_queue);
+		int totalFactParts = this->factScanAPI->totalParts();
+		for(int p_id = 0; p_id < totalFactParts; p_id++)
+			this->addNewJob(0, p_id, JOB_TYPE::AGG, this->sw_queue);
 
-				//printf("Agg. Queue\n");
-				//this->sw_queue->printQueue();
+		printf("Agg. Queue -- %d elements in total!\n", totalFactParts);
+		this->sw_queue->printQueue();
 
-				break;
-			}
-		}
 		this->thr_sync->waitOnAggBarrier();
 	}
 
 public:
-	DaxHandler(Syncronizer *sync, int size, bool isAsync, EXEC_TYPE e_type) : ThreadHandler<T>(sync, e_type) {
+	DaxHandler(Syncronizer *sync, int size, bool isAsync, EXEC_TYPE e_type, int thr_id) : ThreadHandler<T>(sync, e_type, thr_id) {
 		this->q_size = size;
 		async = isAsync;
 		if (!async)
@@ -333,35 +379,34 @@ public:
 	}
 
 	void createDaxContext() {
-		//int lFile = open("/tmp/dax_log.txt", O_RDWR);
+		int lFile = open("/tmp/dax_log.txt", O_RDWR);
 
 		dax_status_t res = dax_thread_init(1, 1, 0, NULL, &ctx);
 		if (res != 0)
-			printf("Problem with DAX Context Creation! Return code is %d.\n",
-					res);
+			printf("Problem with DAX Context Creation! Return code is %d.\n", res);
 
-		printf("DAX Queue Size: %d\n", this->q_size);
 		res = dax_queue_create(ctx, this->q_size, &dax_queue);
 		if (res != 0)
 			printf("Problem with DAX Queue Creation! Return code is %d.\n",
 					res);
 
-		//res = dax_set_log_file(ctx, DAX_LOG_ERROR | DAX_LOG_WARNING, lFile);
-		//if(res != 0)
-		//printf("Problem with DAX Logger Creation! Return code is %d.\n", res);
+		res = dax_set_log_file(ctx, DAX_LOG_ERROR, lFile);
+		if(res != 0)
+			printf("Problem with DAX Logger Creation! Return code is %d.\n", res);
 
-		//res = dax_set_debug(ctx, DAX_DEBUG_ALL);
+		//res = dax_set_debug(ctx, DAX_DEBUG_PERF);
 		//if(res != 0)
-		//printf("Problem with DAX Debug Creation! Return code is %d.\n", res);
+			//printf("Problem with DAX Debug Creation! Return code is %d.\n", res);
 
-		//dax_props_t props;
-		//res = dax_get_props(ctx, &props);
-		//if(res != 0)
-		//printf("Problem with DAX Props! Return code is %d.\n", res);
+		dax_props_t props;
+		res = dax_get_props(ctx, &props);
+		if(res != 0)
+			printf("Problem with DAX Props! Return code is %d.\n", res);
+		cout << "Best bitmap align:" <<props.trans_bitmap_align_best << endl;
 	}
 
 	inline void handlePollReturn(int items_done, dax_poll_t *poll_data,
-			WorkQueue<T>* work_queue) {
+			WorkQueue<T> *work_queue) {
 		Node<T> *node_item;
 		JOB_TYPE j_type;
 		int p_id;
@@ -374,14 +419,15 @@ public:
 			//finished(j_type, p_id);
 
 			//1) log runtimes
-			if (j_type <= JOB_TYPE::P_SCAN) {
+			if (j_type <= JOB_TYPE::D_SCAN) {
 				this->result.addRuntime(true, j_type,
-						make_tuple(post_data->t_start, gethrtime(), j_type,
-								p_id));
+						make_tuple(post_data->t_start, gethrtime(), j_type, p_id));
+				if(j_type > LO_SCAN){
+					this->dimScanAPIs[j_type]->PartDone();
+				}
 			} else{ //must be a join
 				this->result.addRuntime(true, j_type,
-						make_tuple(post_data->t_start, gethrtime(), j_type,
-								p_id));
+						make_tuple(post_data->t_start, gethrtime(), j_type, p_id));
 			}
 			//2) log count results
 			this->result.addCountResult(make_tuple(j_type, poll_data[i].count));
@@ -390,9 +436,8 @@ public:
 			//3) create follow up jobs if any
 			if (j_type == JOB_TYPE::LO_SCAN && this->eType != EXEC_TYPE::DD) {
 				//this->api_ls->incrementCounter();
-				this->addNewJob(0, p_id, JOB_TYPE::LC_JOIN, work_queue);
-				this->addNewJob(0, p_id, JOB_TYPE::LS_JOIN, work_queue);
-				this->addNewJob(0, p_id, JOB_TYPE::LD_JOIN, work_queue);
+				this->addNewJoins(p_id, work_queue);
+				//printf("adding joins after filter...\n");
 				//work_queue->printQueue();
 			} else if (j_type == JOB_TYPE::LD_JOIN) {
 				if(this->eType == EXEC_TYPE::DD){
@@ -424,10 +469,6 @@ public:
 
 		//this->api_ss->incrementCounter();
 		//this->j2_ls->setExecFlag(p_id);
-	}
-
-	void setHHWQueue(WorkQueue<T> *queue) {
-		this->hw_queue->printQueue();
 	}
 
 	void finished(int j_type, int p_id) {

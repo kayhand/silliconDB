@@ -33,10 +33,9 @@ class ProcessingUnit{
     WorkQueue<Query> swQueue; 
     WorkQueue<Query> hwQueue;
 
-    //std::vector<DataCompressor*> dataArr;
     DataLoader *dataLoader;
 
-    ScanApi *factScanAPI;
+    std::vector<ScanApi*> factScanAPIs;
     std::vector<ScanApi*> dimScanAPIs;
     std::vector<JoinApi*> joinAPIs;
     AggApi* aggAPI;
@@ -46,8 +45,6 @@ class ProcessingUnit{
         ProcessingUnit(int, string, DataLoader*);
         ~ProcessingUnit();
 
-    //void addCompressedTable(DataCompressor*);
-    //void addCompressedTables(std::vector<DataCompressor*> &compTables);
     void createProcessingUnit(Syncronizer*, int);
     void addScanItems(int, JOB_TYPE, int, WorkQueue<Query>*);
     void initWorkQueues(int);
@@ -56,7 +53,6 @@ class ProcessingUnit{
     void writeResults();
 
     void initializeAPI(ParserApi&);
-    //void initializeAPI(int, ParserApi&);
 
 
     WorkQueue<Query>* getSharedQueue(){
@@ -90,6 +86,20 @@ class ProcessingUnit{
     		cout << "Join Col. Id " << curJoin->JoinColId() << endl;
     		printf("Dimension table id: %d\n", curJoin->DimensionScan()->getBaseTable()->t_meta.t_id);
     	}
+    }
+
+    int totalFactParts(){
+    	int sum = 0;
+    	for(ScanApi *factScan : factScanAPIs)
+    		sum += factScan->getBaseTable()->NumOfParts();
+    	return sum;
+    }
+
+    int totalDimParts(){
+    	int sum = 0;
+    	for(ScanApi *dimScan : dimScanAPIs)
+    		sum += dimScan->getBaseTable()->NumOfParts();
+    	return sum;
     }
 };
 

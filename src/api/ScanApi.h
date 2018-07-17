@@ -20,6 +20,7 @@ extern "C" {
 class ScanApi {
 private:
 	table *baseTable;
+	bool hasFilter = true;
 	int colId; //column id to scan
 
 	int num_of_parts;
@@ -34,19 +35,19 @@ private:
 
 	dax_int_t predicate1;
 	dax_int_t predicate2;
-	uint64_t flag = DAX_CACHE_DST;
+	uint64_t flag;
 
 	dax_vec_t src;
 	dax_vec_t dst;
 
 	JOB_TYPE j_type;
 
+	ScanApi *subScan = NULL; //predicates on multiple columns
+
+	atomic<int> partsDone{0};
+
 	void reserveBitVector(int block_size) {
 		posix_memalign(&filter_vector, 4096, block_size);
-	}
-
-	void* getFilterBitVector(int offset) {
-		return static_cast<uint64_t*>(filter_vector) + offset;
 	}
 
 	friend class JoinApi;
@@ -63,22 +64,56 @@ public:
 		initScanPredicates(q_pred);
 	}
 
+	ScanApi(table *baseTable, JOB_TYPE j_type) {
+		this->baseTable = baseTable;
+		this->colId = -1;
+		this->num_of_segments = baseTable->t_meta.num_of_segments / baseTable->t_meta.num_of_parts;
+		this->blockSize = baseTable->t_meta.num_of_segments * 8;
+		this->num_of_parts = baseTable->t_meta.num_of_parts;
+		this->j_type = j_type;
+		hasFilter = false;
+
+		reserveBitVector(blockSize);
+	}
+
 	~ScanApi() {
 		free(filter_vector);
+	}
+
+	void setSubScan(ScanApi *subScan){
+		this->subScan = subScan;
+	}
+
+	ScanApi* SubScan(){
+		if(this->subScan == NULL)
+			return NULL;
+		return this->subScan;
+	}
+
+	JOB_TYPE &Type(){
+		return j_type;
+	}
+
+	bool HasFilter(){
+		return hasFilter;
+	}
+
+	bool HasAggKey(){
+		return baseTable->t_meta.hasAggKey;
 	}
 
 	int totalParts() {
 		return num_of_parts;
 	}
 
-	/*bool isCompleted() {
+	bool isCompleted(){
 		return partsDone == num_of_parts;
 	}
 
-	void incrementCounter() {
+	void PartDone(){
 		partsDone++;
-	}*/
-
+		//printf("%u\n", (unsigned) partsDone);
+	}
 
 	void initScanPredicates(query_predicate &q_pred){
 		printf("\tInitializing predicates for ScanAPI ...\n");
@@ -92,6 +127,8 @@ public:
 				pred2 = baseTable->columns[colId].keys[q_pred.params[1]];
 		}
 		else if(q_pred.columnType == data_type_t::INT){
+			printf("INTEGER VALS!\n");
+			printf("%s - %s\n", q_pred.params[0].c_str(), q_pred.params[1].c_str());
 			pred1 = baseTable->columns[colId].i_keys[atoi(q_pred.params[0].c_str())];
 			if(q_pred.params[1] != "")
 				pred2 = baseTable->columns[colId].i_keys[atoi(q_pred.params[1].c_str())];
@@ -127,7 +164,7 @@ public:
 		dst.format = DAX_BITS;
 		dst.elem_width = 1;
 
-		flag = DAX_CACHE_DST;
+		flag = DAX_NOWAIT;
 	}
 
 	int bitVectorBlockSize() {
@@ -136,6 +173,11 @@ public:
 
 	table* getBaseTable() {
 		return this->baseTable;
+	}
+
+	void* getFilterBitVector(int part) {
+		int offset = part * this->num_of_segments;
+		return static_cast<uint64_t*>(filter_vector) + offset;
 	}
 
 	void* getBitResult() {
@@ -148,9 +190,9 @@ public:
 	}
 
 //#ifdef __sun
-	void hwScan(dax_queue_t**, Node<Query>*);
+	bool hwScan(dax_queue_t**, Node<Query>*);
 //#endif
-	void simdScan16(Node<Query>*, Result *result);
+	bool simdScan16(Node<Query>*, Result *result);
 
 	//helper
 	void printBitVector(uint64_t *bit_vector, int segs, uint64_t clear_vector) {

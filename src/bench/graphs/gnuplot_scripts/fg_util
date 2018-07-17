@@ -1,0 +1,23 @@
+#set term png
+set terminal postscript enhanced color
+set output out_file
+
+#set output 'util.png'
+
+set key off
+
+#set xlabel "time (ns)"
+set size 0.75,0.75
+set grid xtics y2tics
+
+set xrange [50:0]
+set xtics rotate by 90 offset 0,-1 out
+set xtics font ", 10"
+
+set yrange [0:8000000]
+unset ytics
+
+set y2tics rotate by 90
+set y2tics font ", 10"
+
+plot in_data using 1:2:2:3:3 with candlesticks lw 1 lc rgb "red"

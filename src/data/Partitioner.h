@@ -17,8 +17,9 @@ public:
 	~Partitioner() {
 	}
 
-	//void roundRobin(int numberOfPartitions, std::string filePath);
 	void roundRobin(std::string filePath, int part_size);
+
+	static int rangePartitioner(uint32_t value);
 
 	std::unordered_map<int, std::pair<int, int>>& getMap() {
 		return partitionMap;

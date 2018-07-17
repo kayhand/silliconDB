@@ -46,8 +46,12 @@ void Partitioner::roundRobin(std::string path, int part_size)
     printf("Number of partitions: %d, Remainder: %d\n", this->num_of_parts, remainder);
 	
     //for(auto &curr : partitionMap){
-        //printf("%d : <%d, %d> \n", curr.first, curr.second.first, curr.second.second);
+        //printf("p_id: %d : s: %d, e: %d \n", curr.first, curr.second.first, curr.second.second);
     //}
     //for(int i = 0; i < this->num_of_parts; i++)
     	//printf("P:%d - S:%d\n", i, partitionSizes[i]);
+}
+
+int Partitioner::rangePartitioner(uint32_t value){
+	return ((value >> 16) | 0);
 }
