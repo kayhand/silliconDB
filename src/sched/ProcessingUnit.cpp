@@ -50,6 +50,7 @@ void ProcessingUnit::createProcessingUnit(Syncronizer *thr_sync, int dax_queue_s
 	daxHandler->setAPIs(factScanAPIs, dimScanAPIs, joinAPIs, aggAPI);
 	daxHandlers.push_back(daxHandler);
 //#endif
+	thr_sync->initJoinCounters(factScanAPIs[0]->getBaseTable()->NumOfParts(), joinAPIs.size());
 }
 
 void ProcessingUnit::addScanItems(int total_parts, JOB_TYPE scan_job, int sf,
@@ -57,7 +58,7 @@ void ProcessingUnit::addScanItems(int total_parts, JOB_TYPE scan_job, int sf,
 	printf("Adding for table (id: %d), # of parts: %d\n", scan_job,
 			total_parts);
 
-	for (int i = 0; i < 1 * sf; i++) {
+	for (int i = 0; i < sf; i++) {
 		for (int p_id = 0; p_id < total_parts; p_id++) {
 			Query item(0, p_id, scan_job); //(0: sw - 1:hw, part_id, table_id)
 			Node<Query> *newNode = new Node<Query>(item);
@@ -69,7 +70,20 @@ void ProcessingUnit::addScanItems(int total_parts, JOB_TYPE scan_job, int sf,
 
 void ProcessingUnit::initWorkQueues(int sf) {
 	JOB_TYPE scan_type;
-	if (sched_approach == EXEC_TYPE::SDB || sched_approach == EXEC_TYPE::OAT) {
+
+	if(sched_approach == REWRITE){
+		for(ScanApi *dimScan : dimScanAPIs){
+			int num_of_parts = dimScan->getBaseTable()->NumOfParts();
+			scan_type = dimScan->Type();
+			this->addScanItems(num_of_parts, scan_type, sf, getSharedQueue());
+		}
+
+		ScanApi *factScan = factScanAPIs[0];
+		int num_of_parts = factScan->getBaseTable()->NumOfParts();
+		scan_type = factScan->Type();
+		this->addScanItems(num_of_parts, scan_type, sf, getSharedQueue());
+	}
+	else if (sched_approach == SDB || sched_approach == OAT) {
 		for(ScanApi *dimScan : dimScanAPIs){
 			int num_of_parts = dimScan->getBaseTable()->NumOfParts();
 			scan_type = dimScan->Type();
@@ -81,22 +95,14 @@ void ProcessingUnit::initWorkQueues(int sf) {
 			scan_type = factScan->Type();
 			this->addScanItems(num_of_parts, scan_type, sf, getSharedQueue());
 		}
-
-		/*
-		DataCompressor *factComp = dataLoader->getFactTableCompressor();
-		this->addScanItems(factComp->getNumOfParts(), LO_SCAN, sf, getSharedQueue());
-
-		if(factScanAPIs.size() == 2){
-			this->addScanItems(factComp->getNumOfParts(), LO_SCAN_2, sf, getSharedQueue());
-		}*/
 	}
-	else if (sched_approach == EXEC_TYPE::DD) {
+	else if (sched_approach == DD) {
 		int totalFactScans = this->totalFactParts();
 		int totalDimScans = this->totalDimParts();
 
 		int totalScans = totalFactScans + totalDimScans;
 
-		int totalDaxScans = totalScans / (2.56 + 1) * 2.56;
+		int totalDaxScans = totalScans / (2.33 + 1) * 2.33;
 		printf("Dax will do %d scans out of %d in total!\n", totalDaxScans, totalScans);
 
 		//Add all dimension scans to the HWQueue
@@ -209,7 +215,10 @@ void ProcessingUnit::initializeAPI(ParserApi &parser) {
 		join = new JoinApi(fact_t, dimScan, join_colId, join_type);
 		joinAPIs.push_back(join);
 	}
-	aggAPI = new AggApi(factScanAPIs[0], joinAPIs);
+
+	bool isSplitted = (this->sched_approach == REWRITE);
+	//bool isSplitted = true;
+	aggAPI = new AggApi(factScanAPIs[0], joinAPIs, isSplitted);
 }
 
 void ProcessingUnit::startThreads(TCPStream* connection) {
@@ -247,12 +256,14 @@ void ProcessingUnit::writeResults() {
 
 	std::unordered_map<std::string, FILE*> all_files { { "SW_SCAN", sscan_f }, {
 			"DAX_SCAN", dscan_f }, { "SW_JOIN", sjoin_f },
-			{ "DAX_JOIN", djoin_f }, { "AGG", agg_rt_f } };
+			{ "DAX_JOIN", djoin_f }, { "AGG", agg_rt_f }};
 
 	map<int, int> count_results {
 		{ LO_SCAN, 0 }, { LO_SCAN_2, 0 }, { S_SCAN, 0 }, { C_SCAN, 0 }, { P_SCAN, 0 }, { D_SCAN_2, 0 }, { D_SCAN, 0 },
 		{ LS_JOIN, 0 }, { LC_JOIN, 0 }, { LP_JOIN, 0 }, { LD_JOIN, 0 } };
+
 	map<int, uint64_t> agg_results;
+	map<string, uint64_t> agg_results_str;
 
 	for (CoreHandler<Query>* curHandler : coreHandlers) {
 		Result result = curHandler->getResult();

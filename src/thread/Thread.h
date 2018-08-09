@@ -43,6 +43,10 @@ struct Node {
 		next.store(source.next.load());
 	}
 
+	JOB_TYPE &JobType(){
+		return ((Query) this->value).getJobType();
+	}
+
 	q_udata post_data;
 	hrtime_t t_start = 0ul;
 	hrtime_t t_end = 0ul;

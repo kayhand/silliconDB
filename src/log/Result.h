@@ -25,7 +25,7 @@ public:
 				dax_join_runtimes.push_back(t_pair);
 			else
 				sw_join_runtimes.push_back(t_pair);
-		} else if (j_type == AGG)
+		} else if (j_type == AGG || j_type == POST_AGG || j_type == PRE_AGG)
 			agg_runtimes.push_back(t_pair);
 	}
 
@@ -35,10 +35,12 @@ public:
 		job_counts.push_back(tuple);
 	}
 
-	//T tuple: <key_type, value_type>
-	template<typename T>
-	void addAggResult(T tuple) {
+	void addAggResult(tuple<uint32_t, uint32_t> tuple) {
 		local_agg_results.push_back(tuple);
+	}
+
+	void addAggResult(tuple<string, uint32_t> tuple) {
+		local_agg_results_str.push_back(tuple);
 	}
 
 	void mergeCountResults(map<int, int> &count_results) {
@@ -49,13 +51,20 @@ public:
 		}
 	}
 
-	template<typename Key, typename Value>
-	void mergeAggResults(map<Key, Value> &merged_agg_results) {
-		for (auto val : local_agg_results) {
-			Key key = get < 0 > (val);
+	void mergeAggResults(map<string, uint64_t> &merged_agg_results) {
+		for (auto val : local_agg_results_str) {
+			string key = get < 0 > (val);
 			merged_agg_results[key] += get < 1 > (val);
 		}
 	}
+
+	void mergeAggResults(map<int, uint64_t> &merged_agg_results) {
+		for (auto val : local_agg_results) {
+			int key = get < 0 > (val);
+			merged_agg_results[key] += get < 1 > (val);
+		}
+	}
+
 
 	static void writeCountsToFile(map<int, int> &merged_counts){
 		FILE *file_ptr = fopen("count_result.txt", "w+");
@@ -79,6 +88,17 @@ public:
 
 		for (auto &aggPair : merged_agg_result){
 			fprintf(file_ptr, "%d -> %lu\n", aggPair.first, aggPair.second);
+		}
+		fprintf(file_ptr, "\n");
+
+		fclose(file_ptr);
+	}
+
+	static void writeAggResultsToFile(map<string, uint64_t> &merged_agg_result){
+		FILE *file_ptr = fopen("agg_result.txt", "w+");
+
+		for (auto &aggPair : merged_agg_result){
+			fprintf(file_ptr, "%s -> %lu\n", aggPair.first.c_str(), aggPair.second);
 		}
 		fprintf(file_ptr, "\n");
 
@@ -123,10 +143,12 @@ private:
 
 	std::unordered_map<std::string, std::vector<time_tuple>*> all_runtimes { {
 			"SW_SCAN", &sw_scan_runtimes }, { "DAX_SCAN", &dax_scan_runtimes },
-			{ "SW_JOIN", &sw_join_runtimes },
-			{ "DAX_JOIN", &dax_join_runtimes }, { "AGG", &agg_runtimes } };
+			{ "SW_JOIN", &sw_join_runtimes }, { "DAX_JOIN", &dax_join_runtimes },
+			{ "AGG", &agg_runtimes } };
 
 	std::vector<tuple<int, uint64_t>> local_agg_results;
+	std::vector<tuple<string, uint64_t>> local_agg_results_str;
+
 	std::vector<tuple<JOB_TYPE, int>> job_counts;
 
 	int thread_id = -1;

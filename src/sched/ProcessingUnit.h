@@ -54,7 +54,6 @@ class ProcessingUnit{
 
     void initializeAPI(ParserApi&);
 
-
     WorkQueue<Query>* getSharedQueue(){
         return &sharedQueue;
     }
@@ -75,6 +74,8 @@ class ProcessingUnit{
     		sched_approach = EXEC_TYPE::SDB;
     	else if(technique == "data_division")
     		sched_approach = EXEC_TYPE::DD;
+    	else if(technique == "rewrite")
+    	    sched_approach = EXEC_TYPE::REWRITE;
     }
 
     void printAPIInfo(){

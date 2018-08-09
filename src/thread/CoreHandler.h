@@ -25,150 +25,51 @@ template<class T>
 class CoreHandler: public ThreadHandler<T> {
 
 	void siliconDB() {
-		Node<T> *node_item;
-		T item;
-		JOB_TYPE j_type;
-		do {
-			if (this->sw_queue->getHead() != this->sw_queue->getTail()) {
-				node_item = this->sw_queue->remove_ref();
-				if (node_item == NULL) {
-					continue;
-				}
-				item = node_item->value;
-				j_type = item.getJobType();
-				if (j_type == JOB_TYPE::LP_JOIN) {
-					this->joinAPIs[j_type]->swJoin32(node_item, &(this->result));
-				}
-				else if (j_type == JOB_TYPE::AGG) {
-					this->api_agg->agg(node_item, &(this->result));
-
-					this->putFreeNode(node_item);
-					this->thr_sync->incrementAggCounter();
-				}
+		Node<T> *work_unit;
+		while (!this->thr_sync->isQueryDone()) {
+			if (this->sw_queue->isNotEmpty()) {
+				work_unit = this->sw_queue->nextElement();
+				this->executeItem(work_unit);
 			}
-			else if (this->shared_queue->getHead() != this->shared_queue->getTail()) {
-				node_item = this->shared_queue->remove_ref();
-				if (node_item == NULL)
-					continue;
-				item = node_item->value;
-				j_type = item.getJobType();
-
-				if (j_type == JOB_TYPE::LO_SCAN) {
-					this->factScanAPI->simdScan16(node_item, &(this->result));
-				}
-				else if (j_type == JOB_TYPE::LO_SCAN_2) {
-					this->factScanAPI2->simdScan16(node_item, &(this->result));
-				}
-				else if (j_type >= S_SCAN && j_type <= D_SCAN) {
-					this->dimScanAPIs[j_type]->simdScan16(node_item, &(this->result));
-				}
-				else if (j_type >= LS_JOIN && j_type <= LD_JOIN) {
-					//printf("Join (%d)\n", j_type);
-					this->joinAPIs[j_type]->swJoin(node_item, &(this->result));
-				}
-				this->putFreeNode(node_item);
-
-				if (j_type == JOB_TYPE::LO_SCAN) {
-					this->addNewJoins(item.getPart(), this->shared_queue);
-				}
-				else if (j_type == JOB_TYPE::LD_JOIN){
-					this->addNewJob(1, item.getPart(), JOB_TYPE::AGG, this->sw_queue);
-				}
+			else if (this->shared_queue->isNotEmpty()) {
+				work_unit = this->shared_queue->nextElement();
+				this->executeItem(work_unit);
 			}
-		} while (!this->thr_sync->isQueryDone());
-
+		}
 	}
 
 	void opAtaTime() {
-		Node<T> *node_item;
-		T item;
-		JOB_TYPE j_type;
-		printf("thread %d starting...\n", this->getId());
+		Node<T> *work_unit;
 		while (!this->thr_sync->isQueryDone()) {
-			if (this->sw_queue->getHead() != this->sw_queue->getTail()) {
-				node_item = this->sw_queue->remove_ref();
-				if (node_item == NULL) {
-					continue;
-				}
-				item = node_item->value;
-				j_type = item.getJobType();
-				if (j_type == JOB_TYPE::LP_JOIN) {
-					this->joinAPIs[j_type]->swJoin32(node_item, &(this->result));
-				}
-				else if (j_type == JOB_TYPE::AGG) {
-					this->api_agg->agg(node_item, &(this->result));
-
-					this->putFreeNode(node_item);
-					this->thr_sync->incrementAggCounter();
-				}
+			if (this->sw_queue->isNotEmpty()) {
+				work_unit = this->sw_queue->nextElement();
+				this->executeItem(work_unit);
 			}
 		}
 	}
 
 	void dataDivision() {
-		Node<T> *node_item;
-		T item;
-		JOB_TYPE j_type;
-
-		while (this->sw_queue->getHead() != this->sw_queue->getTail()) {
-			node_item = this->sw_queue->remove_ref();
-			if (node_item == NULL)
-				continue;
-			item = node_item->value;
-			j_type = item.getJobType();
-
-			if (j_type == JOB_TYPE::LO_SCAN) {
-				this->factScanAPI->simdScan16(node_item, &(this->result));
-			}
-			else if (j_type == JOB_TYPE::LO_SCAN_2) {
-				this->factScanAPI2->simdScan16(node_item, &(this->result));
-			}
-			else if (j_type <= JOB_TYPE::D_SCAN) {
-				this->dimScanAPIs[j_type]->simdScan16(node_item, &(this->result));
-			}
-			this->putFreeNode(node_item);
+		Node<T> *work_unit;
+		//this->sw_queue->printQueue();
+		while (this->sw_queue->isNotEmpty()) {
+			work_unit = this->sw_queue->nextElement();
+			if(work_unit != NULL)
+				this->executeScan(work_unit);
 		}
-		//printf("Core done with scans!\n");
 
 		this->thr_sync->waitOnJoinBarrier();
-
-		while (this->sw_queue->getHead() != this->sw_queue->getTail()) {
-			node_item = this->sw_queue->remove_ref();
-			if (node_item == NULL)
-				continue;
-			item = node_item->value;
-			j_type = item.getJobType();
-
-			if (j_type == JOB_TYPE::LP_JOIN) {
-				this->joinAPIs[j_type]->swJoin32(node_item, &(this->result));
-			}
-			else if (j_type <= JOB_TYPE::LD_JOIN) {
-				this->joinAPIs[j_type]->swJoin(node_item, &(this->result));
-			}
-			else{
-				printf("Wrong...\n");
-			}
-			this->putFreeNode(node_item);
+		while (this->sw_queue->isNotEmpty()) {
+			work_unit = this->sw_queue->nextElement();
+			if(work_unit != NULL)
+				this->executeJoin(work_unit);
 		}
-		printf("Core done with joins!\n");
 		this->thr_sync->waitOnJoinEndBarrier();
 
 		this->thr_sync->waitOnAggBarrier();
-		printf("Now starting aggregation...\n");
-
-		while (this->sw_queue->getHead() != this->sw_queue->getTail()) {
-			node_item = this->sw_queue->remove_ref();
-			if (node_item == NULL) {
-				continue;
-			}
-			item = node_item->value;
-			j_type = item.getJobType();
-			if (j_type == JOB_TYPE::AGG) {
-				this->api_agg->agg(node_item, &(this->result));
-
-				this->putFreeNode(node_item);
-				this->thr_sync->incrementAggCounter();
-			}
+		while (this->sw_queue->isNotEmpty()) {
+			work_unit = this->sw_queue->nextElement();
+			if(work_unit != NULL)
+				this->executeAggregation(work_unit);
 		}
 	}
 
@@ -180,7 +81,7 @@ public:
 	void *run() {
 		this->thr_sync->waitOnStartBarrier();
 
-		if (this->eType == EXEC_TYPE::SDB) {
+		if (this->eType == EXEC_TYPE::SDB || this->eType == EXEC_TYPE::REWRITE) {
 			this->siliconDB();
 			this->thr_sync->waitOnAggBarrier();
 		} else if (this->eType == EXEC_TYPE::OAT) {
@@ -195,21 +96,66 @@ public:
 		return NULL;
 	}
 
-	void finished(int t_id, int p_id) {
-		if (t_id == -1) {
-			printf("    (ls)(p: %d)\n", p_id);
-		} else if (t_id == 0) {
-			printf("    (ss)(p: %d)\n", p_id);
-		} else if (t_id == 1) {
-			printf("    (cs)(p: %d)\n", p_id);
-		} else if (t_id == 2) {
-			printf("    (ds)(p: %d)\n", p_id);
-		} else if (t_id == 11) {
-			printf("    (jc)(p: %d)\n", p_id);
-		} else if (t_id == 12) {
-			printf("    (js)(p: %d)\n", p_id);
-		} else if (t_id == 13) {
-			printf("    (jd)(p: %d)\n", p_id);
+	inline void executeItem(Node<Query> *work_unit){
+		if(work_unit == NULL){
+			return;
+		}
+		else{
+			JOB_TYPE &j_type = work_unit->value.getJobType();
+			if(Types::isScan(j_type)){
+				executeScan(work_unit);
+			}
+			else if(Types::isJoin(j_type)){
+				executeJoin(work_unit);
+			}
+			else{
+				executeAggregation(work_unit);
+			}
+			handleJobReturn(work_unit);
+		}
+	}
+
+	inline void executeScan(Node<Query> *work_unit){
+		JOB_TYPE &j_type = work_unit->value.getJobType();
+		if(Types::isFactScan(j_type)){
+			this->factScanAPI->simdScan(work_unit, &(this->result));
+		}
+		else if(Types::isFact2Scan(j_type)){
+			this->factScanAPI2->simdScan(work_unit, &(this->result));
+		}
+		else{
+			this->dimScanAPIs[j_type]->simdScan(work_unit, &(this->result));
+		}
+	}
+
+	inline void executeJoin(Node<Query> *work_unit){
+		JOB_TYPE &j_type = work_unit->value.getJobType();
+		int &p_id = work_unit->value.getPart();
+		this->joinAPIs[j_type]->swJoin(work_unit, &(this->result));
+		this->thr_sync->joinPartCompleted(p_id);
+	}
+
+	inline void executeAggregation(Node<Query> *work_unit){
+		this->api_agg->agg(work_unit, &(this->result));
+	}
+
+	inline void handleJobReturn(Node<Query> *work_unit){
+		Query item = work_unit->value;
+		this->putFreeNode(work_unit);
+
+		JOB_TYPE j_type = item.getJobType();
+		int &p_id = item.getPart();
+
+		if (j_type == LO_SCAN) {
+			this->addNewJoins(item.getPart(), this->shared_queue);
+		}
+		else if (Types::isJoin(j_type)){
+			if(this->thr_sync->areJoinsDoneForPart(p_id)){
+				this->addNewJob(1, item.getPart(), AGG, this->sw_queue);
+			}
+		}
+		else if (j_type == AGG){
+			this->thr_sync->incrementAggCounter();
 		}
 	}
 

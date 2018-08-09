@@ -47,10 +47,12 @@ private:
 	atomic<int> partsDone{0};
 
 	void reserveBitVector(int block_size) {
+		this->blockSize = block_size;
 		posix_memalign(&filter_vector, 4096, block_size);
 	}
 
 	friend class JoinApi;
+	friend class AggApi;
 
 public:
 	ScanApi(table *baseTable, int selCol, JOB_TYPE j_type, query_predicate &q_pred) {
@@ -192,6 +194,21 @@ public:
 //#ifdef __sun
 	bool hwScan(dax_queue_t**, Node<Query>*);
 //#endif
+	bool simdScan(Node<Query>* node, Result *result){
+		int curPart = node->value.getPart();
+		int ind = colId + (curPart) * baseTable->t_meta.num_of_columns;
+		column *col = &(baseTable->columns[ind]);
+		if(col->encoder.num_of_bits < 8){
+			return simdScan8(node, result);
+		}
+		else if(col->encoder.num_of_bits < 16){
+			return simdScan16(node, result);
+		}
+		else{
+			return false;
+		}
+	}
+	bool simdScan8(Node<Query>*, Result *result);
 	bool simdScan16(Node<Query>*, Result *result);
 
 	//helper

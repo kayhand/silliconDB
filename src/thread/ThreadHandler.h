@@ -25,7 +25,8 @@
 enum EXEC_TYPE {
 	SDB,
 	OAT,
-	DD
+	DD,
+	REWRITE
 };
 
 template<class T>
@@ -40,7 +41,6 @@ protected:
 	WorkQueue<T>* sw_queue = NULL;
 
 	TCPStream* t_stream = NULL;
-	std::vector<DataCompressor*> dataVector;
 	Result result;
 
 	ScanApi *factScanAPI = NULL;

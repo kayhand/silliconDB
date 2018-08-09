@@ -5,7 +5,7 @@ message(${SILLICONDB_SOURCE_DIR})
 message(${SILLICONDB_BINARY_DIR})
 
 set (CMAKE_CXX_FLAGS " -O3 -std=c++1y")
-set (CMAKE_ARCHITECTURE_FLAGS "-m64 -mcpu=ultrasparc3 -mvis2")
+set (CMAKE_ARCHITECTURE_FLAGS "-mcpu=niagara3 -m64 -mvis3")
 
 INCLUDE_DIRECTORIES(/usr/lib/sparcv9)
 LINK_DIRECTORIES(/usr/lib/sparcv9)

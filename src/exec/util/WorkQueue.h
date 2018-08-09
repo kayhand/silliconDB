@@ -56,6 +56,10 @@ public:
 		return tail.load(std::memory_order_relaxed);
 	}
 
+	bool isNotEmpty(){
+		return (getHead() != getTail());
+	}
+
 	void printQueue() {
 		Node<T>* curNode = head.load(std::memory_order_relaxed);
 		curNode = curNode->next;
@@ -111,7 +115,7 @@ public:
 		}
 	}
 
-	Node<T>* remove_ref() {
+	Node<T>* nextElement() {
 		while (true) {
 			Node<T> *first = head.load(std::memory_order_relaxed);
 			Node<T> *last = tail.load(std::memory_order_relaxed);
@@ -214,11 +218,6 @@ public:
 	int getId() {
 		return mq_id;
 	}
-
-	//DataLoader* getDataLoader(){
-	//return this->dataLoader;
-	//}
-
 };
 
 #endif

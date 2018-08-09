@@ -19,7 +19,16 @@
 #include <bitset>
 
 #include "Partitioner.h"
-//#include "api/ParserApi.h"
+
+#ifdef __sun
+extern "C" {
+#include "/usr/include/dax.h"
+}
+#else
+extern "C" {
+#include "/usr/local/dax.h"
+}
+#endif
 
 #define WORD_SIZE 64
 
@@ -32,6 +41,7 @@ enum data_type_t {
 struct column_meta {
 	bool isFK = false;
 	bool coPart = false;
+
 	data_type_t data_type;
 
 	int column_id = -1;
@@ -47,12 +57,63 @@ struct column_meta {
 };
 
 struct column_encoder {
-	int num_of_bits = -1;
+	column_meta *c_meta;
+
+	int num_of_bits = -1; //assigned in calculateBitSizes()
+	uint16_t n_syms; //assigned in calculateBitSizes()
+	uint8_t* widths;
+	void* symbols; //int or string (char*) symbols
+
+	dax_zip_t *codec;
 
 	//Compressed to decompressed values
 	unordered_map<uint32_t, string> dict;
 	uint32_t* i_dict;
 	double* d_dict;
+
+	bool zipped = false;
+
+	void createCodecMeta(){
+		if(c_meta->data_type == STRING){ //string column
+			widths = new uint8_t[dict.size()];
+			int byte_len = 0;
+			for(auto &pair : dict){
+			    widths[pair.first] = pair.second.length();
+			    byte_len += widths[pair.first];
+			}
+
+			for(auto &pair : dict){
+				symbols = new char[byte_len];
+				string sym = pair.second;
+				strcat((char*) symbols, sym.c_str());
+			}
+		}
+		else if(c_meta->data_type == INT){
+			int bytes_req = (n_syms / 2) + (n_syms % 2);
+			cout << "\t === " << bytes_req << endl;
+			widths = new uint8_t[bytes_req];
+
+			for(int i = 0;  i < bytes_req; i++)
+				widths[i] = 68;
+			symbols = (void *) i_dict;
+		}
+
+		zipped = true;
+		cout << "===== Symbols for compressed column =====" << endl;
+		for(int i = 0; i < n_syms; i++){
+			cout << ((uint32_t*) symbols) [i] << "-";
+		}
+		cout << endl;
+		cout << "============" << endl;
+	}
+};
+
+struct co_part{
+	uint16_t *left_partition;
+	uint16_t *right_partition;
+
+	int part1_count;
+	int part2_count;
 };
 
 struct column {
@@ -62,7 +123,7 @@ struct column {
 	uint32_t *data = 0;  //this is actually compressed but kept line by line
 	uint64_t *compressed; //compressed bit vector
 
-	uint16_t *co_partitioned;
+	co_part co_partitioned;
 
 	map<string, uint32_t> keys;
 	map<int, uint32_t> i_keys;
@@ -95,7 +156,6 @@ struct table_meta {
 	string path;
 
 	unordered_map<uint32_t, uint32_t> groupByMap; //pk to compressed_val
-	unordered_map<int, bool> groupByKeys; //distinct gro
 };
 
 struct table {
@@ -160,6 +220,12 @@ public:
 				delete[] t.columns[i].encoder.d_dict;
 				break;
 			}
+
+			if(col->encoder.zipped == true){
+				delete[] col->encoder.widths;
+				if(col->c_meta.data_type == STRING)
+					delete[] ((char*) col->encoder.symbols);
+			}
 		}
 
 		int all_parts = t.t_meta.num_of_columns * t.t_meta.num_of_parts;
@@ -181,16 +247,14 @@ public:
 			}
 			delete[] col->data;
 			delete[] col->compressed;
-			//if(col->c_meta.isFK)
-				//delete[] col->co_partitioned;
-
+			if(col->c_meta.isFK && col->c_meta.coPart){
+				delete[] col->co_partitioned.left_partition;
+				delete[] col->co_partitioned.right_partition;
+			}
 		}
 		delete[] t.columns;
 		delete[] distinct_keys;
 		delete partitioner;
-
-		if(t.t_meta.isFact)
-			cout << "Good bye!" << endl;
 	}
 
 	void createTableMeta(bool);
@@ -202,8 +266,9 @@ public:
 	void createColumns();
 	void compress();
 	void bit_compression(column &c);
-	void co_partition(column &c);
-	void co_partition_test(column &c);
+	//void co_partition(column &c);
+	void co_partition_new(column &c);
+	//void co_partition_test(column &c);
 	void bw_compression(column &c);
 	void calculateBitSizes();
 

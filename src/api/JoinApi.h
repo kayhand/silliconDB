@@ -17,6 +17,7 @@ extern "C" {
 #include "thread/Thread.h"
 #include "api/ScanApi.h"
 
+
 class JoinApi {
 private:
 	table *factTable;
@@ -25,7 +26,11 @@ private:
 	int joinColId; //id of the join column
 
 	uint64_t *bit_map_res;
-	void *join_vector; //keep the join result -- defines which items of the fact table satisfies
+	void *join_vector; //keep the join result
+
+	//if repartitioned join
+	vector<void*> join_vectors; //keep the join results
+
 	int block_size;
 
 	int num_of_columns;
@@ -34,19 +39,30 @@ private:
 	dax_vec_t src;
 	dax_vec_t bit_map;
 	dax_vec_t dst;
+
 	uint64_t flag;
 
 	JOB_TYPE j_type;
+	bool co_part = false;
 
 	void reserveBitVector() {
 		this->block_size = factTable->t_meta.num_of_segments * 8;
 		posix_memalign(&join_vector, 4096, block_size);
+		if(this->co_part){
+			int size = 4;
+			join_vectors.reserve(size);
+
+			for(int i = 0; i < size; i++){
+				void *cp_vector;
+				posix_memalign(&cp_vector, 4096, block_size);
+				join_vectors.push_back(cp_vector);
+			}
+		}
 	}
 
 	friend class AggApi;
 
 public:
-
 	JoinApi(table *factTable, ScanApi *dimScan, int joinColId, JOB_TYPE j_type) {
 		this->factTable = factTable;
 		this->dimensionScan = dimScan;
@@ -56,11 +72,19 @@ public:
 		this->num_of_columns = factTable->t_meta.num_of_columns;
 		this->segs_per_part = factTable->t_meta.num_of_segments / factTable->t_meta.num_of_parts;
 
+		this->co_part = factTable->columns[joinColId].c_meta.coPart;
+		//this->co_part = false;
+
 		initializeJoin();
 	}
 
 	~JoinApi() {
 		free(join_vector);
+		if(this->co_part){
+			for(void* cp_vector : join_vectors){
+				free(cp_vector);
+			}
+		}
 	}
 
 	void initializeJoin() {
@@ -75,6 +99,8 @@ public:
 		memset(&dst, 0, sizeof(dax_vec_t));
 
 		src.elem_width = (&factTable->columns[joinColId])->encoder.num_of_bits + 1;
+		if(co_part)
+		    src.elem_width /= 2;
 		src.format = DAX_BITS;
 
 		bit_map.format = DAX_BITS;
@@ -99,9 +125,37 @@ public:
 		return (static_cast<uint64_t*>(join_vector)) + offset;
 	}
 
+	void* getSubJoinBitVector(int j_id, int part) {
+		int offset = part * this->segs_per_part;
+		return (static_cast<uint64_t*>(join_vectors[j_id])) + offset;
+	}
+
+	void* getSubBitMap(int j_id) {
+		int offset = j_id * 4096; //byte offset for the bit_map
+		return (void*) (bit_map_res + offset);
+	}
+
 	void hwJoin(dax_queue_t**, Node<Query>*);
-	void swJoin(Node<Query>*, Result*);
-	void swJoin32(Node<Query>*, Result*);
+	void hwJoinCp(dax_context**, Node<Query>*);
+
+	template<typename BitSize>
+	void swJoin_(Node<Query>*, Result*);
+
+	void swJoin(Node<Query>* node, Result* result){
+		int curPart = node->value.getPart();
+		int ind = joinColId + curPart * this->num_of_columns;
+		column *join_col = &(factTable->columns[ind]);
+
+		if(join_col->encoder.num_of_bits < 8){
+			this->swJoin_<uint8_t>(node, result);
+		}
+		else if(join_col->encoder.num_of_bits < 16){
+			this->swJoin_<uint16_t>(node, result);
+		}
+		else{
+			this->swJoin_<uint32_t>(node, result);
+		}
+	}
 
 	void printBitVector(uint64_t cur_result, int segId) {
 		//print bit vals
@@ -147,7 +201,7 @@ public:
 		return res;
 	}
 
-	bool bitAtPosition(uint16_t bit_pos) {
+	bool bitAtPosition(int bit_pos) {
 		int arr_ind = bit_pos / 64;
 		int local_pos = 63 - (bit_pos % 64);
 
@@ -166,6 +220,16 @@ public:
 		}
 		return result;
 	}
+
+	/*uint8_t bytes_to_bits(uint64_t val){
+		uint8_t condensed_vec[8];
+		uint8_t return_val;
+		condensed_vec = (uint8_t *) val;
+		for(int i = 0; i < 8; i++){
+			return_val |= (condensed_vec[i] << i);
+		}
+		return return_val;
+	}*/
 
 	int JoinColId(){
 		return this->joinColId;
