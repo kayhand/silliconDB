@@ -81,13 +81,13 @@ public:
 	void *run() {
 		this->thr_sync->waitOnStartBarrier();
 
-		if (this->eType == EXEC_TYPE::SDB || this->eType == EXEC_TYPE::REWRITE) {
+		if ((this->eType & SDB) == EXEC_TYPE::SDB) {
 			this->siliconDB();
 			this->thr_sync->waitOnAggBarrier();
-		} else if (this->eType == EXEC_TYPE::OAT) {
+		} else if ((this->eType & OAT) == EXEC_TYPE::OAT) {
 			this->thr_sync->waitOnAggBarrier();
 			this->opAtaTime();
-		} else if (this->eType == EXEC_TYPE::DD) {
+		} else if ((this->eType & DD) == EXEC_TYPE::DD) {
 			this->dataDivision();
 		}
 		this->thr_sync->waitOnEndBarrier();
@@ -147,7 +147,9 @@ public:
 		int &p_id = item.getPart();
 
 		if (j_type == LO_SCAN) {
-			this->addNewJoins(item.getPart(), this->shared_queue);
+			//QT MICROBENCH//
+			//this->addNewJoins(item.getPart(), this->shared_queue);
+			this->thr_sync->incrementAggCounter();
 		}
 		else if (Types::isJoin(j_type)){
 			if(this->thr_sync->areJoinsDoneForPart(p_id)){

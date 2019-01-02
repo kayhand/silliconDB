@@ -15,7 +15,6 @@
 #include "util/Types.h"
 #include "util/Query.h"
 
-
 #define FREELISTSIZE 6
 
 struct q_udata {
@@ -50,6 +49,7 @@ struct Node {
 	q_udata post_data;
 	hrtime_t t_start = 0ul;
 	hrtime_t t_end = 0ul;
+	int count = 0; //for syncronous calls
 };
 
 template<class T>
@@ -64,6 +64,7 @@ class Thread {
 public:
 	Thread() :
 			tid(0), running(0), detached(0), nextSlot(0){
+		node_pool.reserve(5000);
 	}
 
 	virtual ~Thread() {

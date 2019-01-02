@@ -7,10 +7,10 @@
 
 #include "ProcessingUnit.h"
 
-ProcessingUnit::ProcessingUnit(int num_of_cu, string sched_type,
+ProcessingUnit::ProcessingUnit(int num_of_cu, EXEC_TYPE sched_type,
 		DataLoader *dataLoader) {
 	this->numOfComputeUnits = num_of_cu;
-	setSchedApproach(sched_type);
+	this->sched_approach = sched_type;
 	this->dataLoader = dataLoader;
 }
 
@@ -65,25 +65,13 @@ void ProcessingUnit::addScanItems(int total_parts, JOB_TYPE scan_job, int sf,
 			queue->add(newNode);
 		}
 	}
-	queue->printQueue();
+	//queue->printQueue();
 }
 
 void ProcessingUnit::initWorkQueues(int sf) {
 	JOB_TYPE scan_type;
 
-	if(sched_approach == REWRITE){
-		for(ScanApi *dimScan : dimScanAPIs){
-			int num_of_parts = dimScan->getBaseTable()->NumOfParts();
-			scan_type = dimScan->Type();
-			this->addScanItems(num_of_parts, scan_type, sf, getSharedQueue());
-		}
-
-		ScanApi *factScan = factScanAPIs[0];
-		int num_of_parts = factScan->getBaseTable()->NumOfParts();
-		scan_type = factScan->Type();
-		this->addScanItems(num_of_parts, scan_type, sf, getSharedQueue());
-	}
-	else if (sched_approach == SDB || sched_approach == OAT) {
+	if ((sched_approach & DD) != DD) {
 		for(ScanApi *dimScan : dimScanAPIs){
 			int num_of_parts = dimScan->getBaseTable()->NumOfParts();
 			scan_type = dimScan->Type();
@@ -96,7 +84,7 @@ void ProcessingUnit::initWorkQueues(int sf) {
 			this->addScanItems(num_of_parts, scan_type, sf, getSharedQueue());
 		}
 	}
-	else if (sched_approach == DD) {
+	else{
 		int totalFactScans = this->totalFactParts();
 		int totalDimScans = this->totalDimParts();
 
@@ -198,7 +186,7 @@ void ProcessingUnit::initializeAPI(ParserApi &parser) {
 					dimScan = new ScanApi(dim_t, selId_d, scan_type, cur_pred);
 					dimScanAPIs.push_back(dimScan);
 				}
-				else if(p_id == 1){ //ssb query 1.3
+				else if(p_id == 1){ //happens only for ssb query 1.3
 					scan_type = D_SCAN_2;
 					dimScan = new ScanApi(dim_t, selId_d, scan_type, cur_pred);
 					dimScanAPIs.push_back(dimScan);
@@ -212,12 +200,16 @@ void ProcessingUnit::initializeAPI(ParserApi &parser) {
 
 		join_type = parser.JoinType(dim_t_id);
 		join_colId = parsed_fact_t.joinColumnIds[dim_t_id];
-		join = new JoinApi(fact_t, dimScan, join_colId, join_type);
+
+		bool isCoPartitioned = fact_t->columns[join_colId].c_meta.coPart;
+		bool isJoinRw = this->sched_approach & EXEC_TYPE::JOIN_RW;
+
+		join = new JoinApi(fact_t, dimScan, join_colId, join_type, isCoPartitioned, isJoinRw);
 		joinAPIs.push_back(join);
 	}
 
-	bool isSplitted = (this->sched_approach == REWRITE);
-	//bool isSplitted = true;
+	//bool isSplitted = (this->sched_approach == REWRITE);
+	bool isSplitted = false;
 	aggAPI = new AggApi(factScanAPIs[0], joinAPIs, isSplitted);
 }
 
@@ -252,7 +244,13 @@ void ProcessingUnit::writeResults() {
 	FILE *djoin_f = fopen("logs/dax_join.txt", "w+");
 	FILE *agg_rt_f = fopen("logs/agg_runtime.txt", "w+");
 
-	//FILE *count_f = fopen("count.txt", "a");
+	FILE *arrivals_f = fopen("logs/arrival_ts.txt", "w+");
+	FILE *arates_f = fopen("logs/arrival_rates.txt", "w+");
+
+	FILE *post_f = fopen("logs/post_times.txt", "w+");
+	FILE *poll_f = fopen("logs/poll_times.txt", "w+");
+	FILE *poll_r_f = fopen("logs/poll_returns.txt", "w+");
+	FILE *exec_f = fopen("logs/execution_times.txt", "w+");
 
 	std::unordered_map<std::string, FILE*> all_files { { "SW_SCAN", sscan_f }, {
 			"DAX_SCAN", dscan_f }, { "SW_JOIN", sjoin_f },
@@ -275,6 +273,16 @@ void ProcessingUnit::writeResults() {
 
 	Result result = daxHandlers[0]->getResult();
 	result.writeRuntimeResultsToFile(all_files);
+	result.writeArrivalsToFile(arrivals_f);
+	result.writeArrivalRatesToFile(arates_f);
+
+	result.writeFineGrainedPostTimesToFile(post_f);
+
+	//result.writePostTimesToFile(post_f);
+	result.writePollTimesToFile(poll_f);
+	result.writePollReturnsToFile(poll_r_f);
+	result.writeExecutionTimesToFile(exec_f);
+
 	result.mergeCountResults(count_results);
 
 	Result::writeCountsToFile(count_results);
@@ -285,4 +293,12 @@ void ProcessingUnit::writeResults() {
 	fclose(sjoin_f);
 	fclose(sjoin_f);
 	fclose(agg_rt_f);
+
+	fclose(arrivals_f);
+	fclose(arates_f);
+
+	fclose(post_f);
+	fclose(poll_f);
+	fclose(poll_r_f);
+	fclose(exec_f);
 }

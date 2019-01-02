@@ -25,13 +25,12 @@ template<class T>
 class DaxHandler: public ThreadHandler<T> {
 //#ifdef __sun
 
+	/*
 	void siliconDB() {
 		int items_done = this->q_size;
 		Node<T> *work_unit;
 		bool hasFilter = true;
 
-		this->shared_queue->printQueue();
-		//while (this->shared_queue->isNotEmpty()){ -- for q1_y
 		while (!this->thr_sync->isQueryDone()){
 			for (int i = 0; i < items_done; i++) {
 				if (this->shared_queue->isNotEmpty()) {
@@ -48,17 +47,51 @@ class DaxHandler: public ThreadHandler<T> {
 					break;
 				}
 			}
-
 			items_done = pollDaxUnits(this->shared_queue);
-
-			/*if(items_done < 0 && (this->shared_queue->isNotEmpty())){
-				items_done = this->q_size;
-			}*/
+			//printf("%d - ", items_done);
 		}
 
 		pollForLastItems(this->shared_queue);
 
-		printf("DAX DONE!\n");
+		printf("\nDAX DONE!\n");
+		this->thr_sync->waitOnAggBarrier();
+	}*/
+
+	void siliconDB() {
+		Node<T> *work_unit;
+
+		int poll_size = this->q_size;
+		int submit_size = poll_size;
+
+		hrtime_t start_ts = gethrtime();
+		this->result.start_ts = start_ts;
+		while (this->shared_queue->isNotEmpty()){
+			for (int i = 0; i < submit_size; i++) {
+				work_unit = this->shared_queue->nextElement();
+				if(work_unit == NULL){
+					continue;
+				}
+				this->factScanAPI->hwScanQT(&dax_queue, work_unit, &(this->result));
+			}
+			submit_size = pollDaxUnits(poll_size);
+			//this->result.logPostCalls((int) (gethrtime() - start_ts), submit_size);
+
+			//hrtime_t poll_end = gethrtime();
+			//if(submit_size > 0)
+				//this->result.logPollCalls((int) ((poll_end - start_ts)) , submit_size);
+		}
+		hrtime_t end_ts = gethrtime();
+
+		printf("Jobs done...\n");
+		int items_done = 0;
+		while (items_done >= 0) { //busy polling
+			items_done = pollDaxUnits(poll_size);
+		}
+		printf("Took %d ns in total!", (int) (end_ts - start_ts));
+
+		//pollForLastItems(this->shared_queue);
+
+		printf("\nDAX DONE!\n");
 		this->thr_sync->waitOnAggBarrier();
 	}
 
@@ -150,7 +183,8 @@ class DaxHandler: public ThreadHandler<T> {
 				}
 			}
 
-			items_done = pollDaxUnits(NULL);
+			//items_done = pollDaxUnits(NULL);
+			items_done = pollDaxUnits(this->q_size);
 		}
 
 		pollForLastItems(NULL);
@@ -181,13 +215,13 @@ public:
 
 		this->thr_sync->waitOnStartBarrier();
 
-		if (this->eType == EXEC_TYPE::SDB || this->eType == EXEC_TYPE::REWRITE) {
+		if ((this->eType & SDB) == EXEC_TYPE::SDB) {
 			printf("Starting sdb in DAX!\n");
 			this->siliconDB();
-		} else if (this->eType == EXEC_TYPE::OAT) {
+		} else if ((this->eType & OAT) == EXEC_TYPE::OAT) {
 			printf("Starting op-at-a-time in DAX!\n");
 			this->opAtaTime();
-		} else if (this->eType == EXEC_TYPE::DD) {
+		} else if ((this->eType & DD) == EXEC_TYPE::DD) {
 			printf("Starting data-division in DAX!\n");
 			this->dataDivision();
 		}
@@ -210,9 +244,9 @@ public:
 			printf("Problem with DAX Context Creation! Return code is %d.\n", res);
 
 		res = dax_queue_create(ctx, this->q_size, &dax_queue);
+		//res = dax_queue_create(ctx, 1000, &dax_queue);
 		if (res != 0)
-			printf("Problem with DAX Queue Creation! Return code is %d.\n",
-					res);
+			printf("Problem with DAX Queue Creation! Return code is %d.\n", res);
 
 		res = dax_set_log_file(ctx, DAX_LOG_ERROR, lFile);
 		if(res != 0)
@@ -238,19 +272,77 @@ public:
 		return items_done;
 	}
 
+	inline int pollDaxUnits(int poll_size){
+		dax_poll_t poll_data[poll_size];
+		//hrtime_t poll_start = gethrtime();
+		int items_done = dax_poll(dax_queue, poll_data, poll_size, 0);
+		if(items_done > 0){
+			//hrtime_t poll_end = gethrtime();
+			//this->result.logPollCalls((int) (poll_end - poll_start), items_done);
+			handlePollReturn(items_done, poll_data);
+		}
+
+		return items_done;
+	}
+
+	inline int blockPollDaxUnits(int block_size){
+		dax_poll_t poll_data[block_size];
+		//int items_done = dax_poll(dax_queue, poll_data, block_size, -1);
+
+		hrtime_t poll_start = gethrtime();
+		int items_done = dax_poll(dax_queue, poll_data, block_size, -1);
+		hrtime_t poll_end = gethrtime();
+
+		if(items_done > 0){
+			int poll_time = (int) ((poll_end - poll_start) / items_done);
+			handlePollReturn(items_done, poll_data, poll_time);
+		}
+
+		return items_done;
+	}
+
 	inline void pollForLastItems(WorkQueue<T> *queue){
 		int items_done = 0;
 		while (items_done != dax_status_t::DAX_EQEMPTY) { // busy polling
 			dax_poll_t poll_data[this->q_size];
-			items_done = dax_poll(dax_queue, poll_data, 1, -1);
+
+			items_done = dax_poll(dax_queue, poll_data, this->q_size, 0);
 			if (items_done > 0) {
 				handlePollReturn(items_done, poll_data, queue);
 			}
 		}
 	}
 
-	inline void handlePollReturn(int items_done, dax_poll_t *poll_data,
-			WorkQueue<T> *work_queue) {
+	//inline void handlePollReturn(int items_done, dax_poll_t *poll_data, int poll_time) {
+	inline void handlePollReturn(int items_done, dax_poll_t *poll_data) {
+		Node<T> *node_item;
+		//JOB_TYPE j_type = LO_SCAN;
+		//int p_id;
+
+		for (int i = 0; i < items_done; i++) {
+			//hrtime_t poll_start = gethrtime();
+
+			q_udata *post_data = (q_udata*) (poll_data[i].udata);
+			node_item = (Node<T> *) (post_data->node_ptr);
+
+			//j_type = node_item->value.getJobType();
+			//p_id = node_item->value.getPart();
+
+			/*this->result.addRuntime(true, j_type, make_tuple(post_data->t_start, gethrtime(), j_type, p_id));
+
+			this->result.logArrivalTS(node_item->t_start);
+			this->result.logExecTime(gethrtime() - node_item->t_start);*/
+
+			this->result.addCountResult(make_tuple(LO_SCAN, poll_data[i].count));
+			this->putFreeNode(node_item);
+			this->thr_sync->incrementAggCounter();
+
+			//hrtime_t poll_end = gethrtime();
+		}
+		//this->result.logPollReturns((int) (gethrtime() - start_ts), items_done);
+	}
+
+	inline void handlePollReturn(int items_done, dax_poll_t *poll_data, WorkQueue<T> *work_queue) {
 		Node<T> *node_item;
 		JOB_TYPE j_type;
 		int p_id;
@@ -266,14 +358,17 @@ public:
 
 			this->putFreeNode(node_item);
 
+			this->thr_sync->incrementAggCounter();
+			continue;
 			//3) create follow up jobs if any
-			if (Types::isFactScan(j_type) && this->eType != DD) {
+			if (Types::isFactScan(j_type) && ((this->eType & DD) != DD)) {
 				this->addNewJoins(p_id, work_queue);
+				this->thr_sync->incrementAggCounter();
 			}
 			else if(Types::isJoin(j_type)){
 				this->thr_sync->joinPartCompleted(p_id);
 				if(this->thr_sync->areJoinsDoneForPart(p_id)){
-					if(this->eType == EXEC_TYPE::DD){
+					if((this->eType & DD) == EXEC_TYPE::DD){
 						this->addNewJob(0, p_id, JOB_TYPE::AGG, this->shared_queue);
 					}
 					else{
@@ -305,20 +400,18 @@ private:
 				isAsync = executeDaxJoin(work_unit);
 			}
 
-
 			if(!isAsync){
 				int p_id = work_unit->value.getPart();
 				if(j_type == LO_SCAN){
-					if(this->eType == SDB)
+					if((this->eType & SDB) == SDB)
 						this->addNewJoins(p_id, this->shared_queue);
-					else if(this->eType == OAT){
+					else if((this->eType & OAT) == OAT){
 						this->addNewJoins(p_id, this->hw_queue);
 					}
 				}
 				else if(j_type == LP_JOIN){
-					printf("Hello...\n");
 					this->result.addRuntime(true, j_type, make_tuple(work_unit->t_start, gethrtime(), j_type, p_id));
-					this->result.addCountResult(make_tuple(j_type, 0));
+					this->result.addCountResult(make_tuple(j_type, work_unit->count));
 
 					this->putFreeNode(work_unit);
 					this->addNewJob(0, p_id, JOB_TYPE::AGG, this->sw_queue);

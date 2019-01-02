@@ -5,7 +5,6 @@
 #include <memory>
 #include <sys/time.h>
 
-//#ifdef __sun
 bool ScanApi::hwScan(dax_queue_t **queue, Node<Query>* node) {
 	int curPart = node->value.getPart();
 
@@ -26,10 +25,10 @@ bool ScanApi::hwScan(dax_queue_t **queue, Node<Query>* node) {
 	void* bit_vector = getFilterBitVector(curPart);
 	dst.data = bit_vector;
 
-	node->t_start = gethrtime();
+	dax_status_t scan_status = dax_status_t::DAX_EQFULL;
 	node->post_data.t_start = gethrtime();
 	node->post_data.node_ptr = (void *) node;
-	dax_status_t scan_status;
+
 	if (cmp == dax_compare_t::DAX_GT_AND_LE || cmp == dax_compare_t::DAX_EQ_OR_EQ){
 		scan_status = dax_scan_range_post(*queue, flag, &src, &dst, cmp, &predicate1, &predicate2, (void *) &(node->post_data));
 	}
@@ -42,11 +41,51 @@ bool ScanApi::hwScan(dax_queue_t **queue, Node<Query>* node) {
 	//printf("Dax (%d), (%d)\n", curPart, node->value.getJobType());
 	return true;
 }
-//#endif
+
+void ScanApi::hwScanQT(dax_queue_t **queue, Node<Query>* node, Result *result) {
+	//hrtime_t post_start = gethrtime();
+
+	int curPart = node->value.getPart();
+	int ind = colId + (curPart) * baseTable->t_meta.num_of_columns;
+	column *col = &(baseTable->columns[ind]);
+	int num_of_els = col->c_meta.col_size;
+
+	this->src.data = col->compressed;
+	this->src.elements = num_of_els;
+	this->dst.elements = num_of_els;
+
+	void* bit_vector = getFilterBitVector(curPart);
+	dst.data = bit_vector;
+
+	dax_status_t scan_status = dax_status_t::DAX_EQFULL;
+
+	/*q_udata post_data;
+	post_data.t_start = gethrtime();
+	post_data.node_ptr = (void *) node;*/
+
+	//hrtime_t post_end = gethrtime();
+
+	node->t_start = gethrtime();
+	if (cmp == dax_compare_t::DAX_GT_AND_LE || cmp == dax_compare_t::DAX_EQ_OR_EQ){
+		scan_status = dax_scan_range_post(*queue, flag, &src, &dst, cmp, &predicate1, &predicate2, (void *) &(node->post_data));
+	}
+	else{
+		scan_status = dax_scan_value_post(*queue, flag, &src, &dst, cmp, &predicate1, (void *) &(node->post_data));
+	}
+
+	//result->logArrivalTS((int) (gethrtime() - result->start_ts));
+
+	node->post_data.node_ptr = (void *) node;
+
+	if(scan_status != 0){
+		printf("Dax Error during scan! %d\n", scan_status);
+		result->logPostCalls(-1);
+	}
+}
 
 bool ScanApi::simdScan8(Node<Query>* node, Result *result) {
 	int curPart = node->value.getPart();
-	int t_id = baseTable->t_meta.t_id;
+	//int t_id = baseTable->t_meta.t_id;
 	int ind = colId + (curPart) * baseTable->t_meta.num_of_columns;
 	column *col = &(baseTable->columns[ind]);
 
@@ -81,8 +120,8 @@ bool ScanApi::simdScan8(Node<Query>* node, Result *result) {
 	int i = 0;
 	int cnt = 0;
 
-	hrtime_t t_start, t_end;
-	t_start = gethrtime();
+	/*hrtime_t t_start, t_end;
+	t_start = gethrtime();*/
 	for (i = 0; i < col->c_meta.num_of_segments; i++) {
 		for (int j = 0; j < total_lines; j++) {
 			cur_result <<= 8;
@@ -120,7 +159,7 @@ bool ScanApi::simdScan8(Node<Query>* node, Result *result) {
 		count += cnt;
 		cur_result = 0;
 	}
-	t_end = gethrtime();
+	//t_end = gethrtime();
 	this->partsDone++;
 
 	if (cmp == dax_compare_t::DAX_LE && extra_vals > 0) {
@@ -129,7 +168,7 @@ bool ScanApi::simdScan8(Node<Query>* node, Result *result) {
 		count += __builtin_popcountl(bit_vector[i - 1]);
 	}
 
-	result->addRuntime(false, this->j_type, make_tuple(t_start, t_end, t_id, curPart));
+	//result->addRuntime(false, this->j_type, make_tuple(t_start, t_end, t_id, curPart));
 	result->addCountResult(make_tuple(this->j_type, count));
 	//printf("Core Count: %d for part %d\n", count, curPart);
 

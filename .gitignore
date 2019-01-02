@@ -1,4 +1,6 @@
 cmake_build/
+src/bench/
+src/log/
 .cproject
 .project
 .settings/

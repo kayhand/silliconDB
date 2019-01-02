@@ -10,14 +10,12 @@ std::vector<std::string> explode(std::string const & s, char delim);
 
 class Partitioner {
 public:
-	Partitioner(std::string filePath, int part_size) {
-		this->roundRobin(filePath, part_size);
-	}
+	Partitioner() {}
 
-	~Partitioner() {
-	}
+	~Partitioner() {}
 
-	void roundRobin(std::string filePath, int part_size);
+	int roundRobin(std::string filePath, int part_size);
+	int roundRobinMicro(std::string filePath, int part_size);
 
 	static int rangePartitioner(uint32_t value);
 
@@ -48,11 +46,12 @@ private:
 	int num_of_atts = 0;
 	int num_of_parts = 0;
 	int segs_per_part = 0;
+	int num_of_distinct = 0;
+
 
 	std::unordered_map<int, int> partitionSizes;
 	std::unordered_map<int, std::pair<int, int>> partitionMap;
 	std::vector<std::string> schema; //column types
-
 };
 
 #endif

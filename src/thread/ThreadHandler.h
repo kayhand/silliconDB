@@ -23,10 +23,14 @@
 #endif
 
 enum EXEC_TYPE {
-	SDB,
+	SDB = 1,
 	OAT,
-	DD,
-	REWRITE
+	DD ,
+
+	JOIN_RW,
+	AGG_RW,
+
+	QT_MICRO
 };
 
 template<class T>
@@ -74,15 +78,17 @@ public:
 	void addNewJoins(int p_id, WorkQueue<T> *work_queue){
 		for(auto &curPair : joinAPIs){
 			JoinApi *curJoin = curPair.second;
-			if(curJoin->JoinType() == LP_JOIN){
-				//printf("Adding lo-p join to the sw-only queue...\n");
-				this->addNewJob(0, p_id, LP_JOIN, this->sw_queue);
+			if(curJoin->isCoPartitioned()){
+				if((this->eType & JOIN_RW) == JOIN_RW)
+					this->addNewJob(0, p_id, curJoin->JoinType(), work_queue);
+				else{
+					this->addNewJob(0, p_id, curJoin->JoinType(), this->sw_queue);
+				}
 			}
 			else{
 				this->addNewJob(0, p_id, curJoin->JoinType(), work_queue);
 			}
 		}
-		//work_queue->printQueue();
 	}
 
 	Result &getResult() {

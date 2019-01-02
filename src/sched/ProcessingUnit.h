@@ -38,11 +38,11 @@ class ProcessingUnit{
     std::vector<ScanApi*> factScanAPIs;
     std::vector<ScanApi*> dimScanAPIs;
     std::vector<JoinApi*> joinAPIs;
-    AggApi* aggAPI;
+    AggApi* aggAPI = NULL;
 
     public: 
         //ProcessingUnit(int, string);
-        ProcessingUnit(int, string, DataLoader*);
+        ProcessingUnit(int, EXEC_TYPE, DataLoader*);
         ~ProcessingUnit();
 
     void createProcessingUnit(Syncronizer*, int);
@@ -64,18 +64,6 @@ class ProcessingUnit{
 
     WorkQueue<Query>* getHWQueue(){
         return &hwQueue;
-    }
-
-    void setSchedApproach(string technique){
-    	//printf("Setting scheduling to %s\n", technique.c_str());
-    	if(technique == "operator_at_a_time")
-    		sched_approach = EXEC_TYPE::OAT;
-    	else if(technique == "siliconDB")
-    		sched_approach = EXEC_TYPE::SDB;
-    	else if(technique == "data_division")
-    		sched_approach = EXEC_TYPE::DD;
-    	else if(technique == "rewrite")
-    	    sched_approach = EXEC_TYPE::REWRITE;
     }
 
     void printAPIInfo(){

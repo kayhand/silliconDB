@@ -43,6 +43,77 @@ void DataCompressor::createTableMeta(bool isFact) {
 	schema->clear();
 }
 
+void DataCompressor::parseDimensionTable() {
+	ifstream file;
+	string buff;
+	uint32_t line = 0;
+	int value;
+	float d_value;
+	vector<string> exploded;
+	column *cur_col;
+	column_meta *c_meta;
+
+	file.open(t.t_meta.path);
+	getline(file, buff);
+	while (getline(file, buff)) {
+		exploded = explode(buff, DELIMITER);
+		for (int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts;
+				col++) {
+			int actual_col = col % t.t_meta.num_of_columns;
+			cur_col = &(t.columns[col]);
+			c_meta = &(cur_col->c_meta);
+
+			if (line < c_meta->start || line > c_meta->end) {
+				continue;
+			}
+
+			switch (c_meta->data_type) {
+			case data_type_t::INT:
+				value = atoi(exploded[actual_col].c_str());
+				cur_col->i_pairs.push_back(make_pair(value, line));
+				if (t.columns[actual_col].i_keys.find(value)
+						== t.columns[actual_col].i_keys.end()) {
+					t.columns[actual_col].i_keys[value] = line;
+					distinct_keys[actual_col] += 1;
+				}
+				break;
+			case data_type_t::DOUBLE:
+				d_value = atof(exploded[actual_col].c_str());
+				cur_col->d_pairs.push_back(make_pair(d_value, line));
+				if (t.columns[actual_col].d_keys.find(d_value)
+						== t.columns[actual_col].d_keys.end()) {
+					t.columns[actual_col].d_keys[d_value] = line;
+					distinct_keys[actual_col] += 1;
+				}
+				break;
+			case data_type_t::STRING:
+				cur_col->str_pairs.push_back(
+						make_pair(exploded[actual_col], line));
+				if (t.columns[actual_col].keys.find(exploded[actual_col])
+						== t.columns[actual_col].keys.end()) {
+					t.columns[actual_col].keys[exploded[actual_col]] = line;
+					distinct_keys[actual_col] += 1;
+				}
+				break;
+			}
+		}
+		line++;
+		exploded.clear();
+	}
+	file.close();
+
+	createDictionaries();
+	calculateBitSizes();
+
+	createEncoders();
+
+	table_meta *t_meta = &(t.t_meta);
+
+	t_meta->num_of_segments = (t_meta->num_of_parts)
+			* partitioner->getSegsPerPart();
+	//t.num_of_segments += ceil((partitioner->getPartitionSize(this->num_of_parts - 1)) / 64.0);
+}
+
 void DataCompressor::parseFactTable(unordered_map<int, DataCompressor*> &dimComps,
 		unordered_map<int, int> &joinFKIds) {
 	printf("Parsing the lineorder table...\n");
@@ -155,22 +226,20 @@ void DataCompressor::parseFactTable(unordered_map<int, DataCompressor*> &dimComp
 	t.t_meta.num_of_segments = (t.t_meta.num_of_parts) * partitioner->getSegsPerPart();
 }
 
-void DataCompressor::parseDimensionTable() {
+void DataCompressor::parseMicroBenchTable(){
 	ifstream file;
 	string buff;
 	uint32_t line = 0;
 	int value;
 	float d_value;
-	vector<string> exploded;
 	column *cur_col;
 	column_meta *c_meta;
 
 	file.open(t.t_meta.path);
-	getline(file, buff);
+	getline(file, buff); //skip num_of_elements
+	getline(file, buff); // skip num_of_distinct
 	while (getline(file, buff)) {
-		exploded = explode(buff, DELIMITER);
-		for (int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts;
-				col++) {
+		for (int col = 0; col < t.t_meta.num_of_columns * t.t_meta.num_of_parts; col++) {
 			int actual_col = col % t.t_meta.num_of_columns;
 			cur_col = &(t.columns[col]);
 			c_meta = &(cur_col->c_meta);
@@ -179,38 +248,14 @@ void DataCompressor::parseDimensionTable() {
 				continue;
 			}
 
-			switch (c_meta->data_type) {
-			case data_type_t::INT:
-				value = atoi(exploded[actual_col].c_str());
-				cur_col->i_pairs.push_back(make_pair(value, line));
-				if (t.columns[actual_col].i_keys.find(value)
-						== t.columns[actual_col].i_keys.end()) {
-					t.columns[actual_col].i_keys[value] = line;
-					distinct_keys[actual_col] += 1;
-				}
-				break;
-			case data_type_t::DOUBLE:
-				d_value = atof(exploded[actual_col].c_str());
-				cur_col->d_pairs.push_back(make_pair(d_value, line));
-				if (t.columns[actual_col].d_keys.find(d_value)
-						== t.columns[actual_col].d_keys.end()) {
-					t.columns[actual_col].d_keys[d_value] = line;
-					distinct_keys[actual_col] += 1;
-				}
-				break;
-			case data_type_t::STRING:
-				cur_col->str_pairs.push_back(
-						make_pair(exploded[actual_col], line));
-				if (t.columns[actual_col].keys.find(exploded[actual_col])
-						== t.columns[actual_col].keys.end()) {
-					t.columns[actual_col].keys[exploded[actual_col]] = line;
-					distinct_keys[actual_col] += 1;
-				}
-				break;
+			value = atoi(buff.c_str());
+			cur_col->i_pairs.push_back(make_pair(value, line));
+			if (t.columns[actual_col].i_keys.find(value) == t.columns[actual_col].i_keys.end()) {
+				t.columns[actual_col].i_keys[value] = line;
+				distinct_keys[actual_col] += 1;
 			}
 		}
 		line++;
-		exploded.clear();
 	}
 	file.close();
 
@@ -220,10 +265,7 @@ void DataCompressor::parseDimensionTable() {
 	createEncoders();
 
 	table_meta *t_meta = &(t.t_meta);
-
-	t_meta->num_of_segments = (t_meta->num_of_parts)
-			* partitioner->getSegsPerPart();
-	//t.num_of_segments += ceil((partitioner->getPartitionSize(this->num_of_parts - 1)) / 64.0);
+	t_meta->num_of_segments = (t_meta->num_of_parts) * partitioner->getSegsPerPart();
 }
 
 void DataCompressor::createEncoders() {
@@ -583,7 +625,7 @@ void DataCompressor::compress() {
 		cur_col.compressed = new uint64_t[word_size]();
 		bit_compression(cur_col);
 
-		if(base_col.c_meta.coPart){
+		if(base_col.c_meta.coPart && this->join_rw){
 			//cur_col.co_partitioned.comp_values = new uint16_t[word_size * 2]();
 
 			cur_col.co_partitioned.left_partition = new uint16_t[word_size * 2]();

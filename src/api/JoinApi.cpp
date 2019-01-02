@@ -50,20 +50,22 @@ void JoinApi::hwJoinCp(dax_context **ctx, Node<Query>* node) {
 	this->src.elements = num_of_els;
 	this->dst.elements = num_of_els;
 
+	dax_result_t res;
 	node->t_start = gethrtime();
 	for(int j_id = 0; j_id < 4; j_id++){
 		bit_map.data = getSubBitMap(j_id);
 		dst.data = (void*) getSubJoinBitVector(j_id, curPart);
 
-		dax_result_t res = dax_translate(*ctx, flag, &src, &dst, &bit_map, src.elem_width);
+		res = dax_translate(*ctx, flag, &src, &dst, &bit_map, src.elem_width);
 
 		if(res.status != DAX_SUCCESS)
 			printf("Dax Join Error! %d\n", res.status);
-		//else{
-        //	printf("Dax Join (p: %d, count: %lu)\n", curPart, res.count);
-		//}
+		else{
+        	printf("Dax Part Join (p: %d, count: %lu)\n", curPart, res.count);
+		}
 	}
-	//printf("HW Cp Join -- part: %d done. Now will merge result vectors!\n", curPart);
+	printf("HW Cp Join -- part: %d done. Now will merge result vectors!\n", curPart);
+	node->count = res.count;
 
 	/*
 	uint64_t *join_vector = getJoinBitVector(curPart);
@@ -90,7 +92,6 @@ void JoinApi::hwJoinCp(dax_context **ctx, Node<Query>* node) {
 
 		}
 	}*/
-
 }
 
 template<typename BitSize>

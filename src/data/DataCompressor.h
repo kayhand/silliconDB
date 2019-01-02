@@ -174,6 +174,7 @@ private:
 
 	int* distinct_keys = NULL;
 	int scale_factor = 1;
+	bool join_rw = false;
 
 	void cleanUp();
 	void initTable();
@@ -181,10 +182,11 @@ private:
 public:
 
 	DataCompressor(string filename, int t_id, int gby_id,
-			int part_size, int sf){
+			int part_size, int sf, bool join_rw){
 		table_meta *t_meta = &(this->t.t_meta);
 		t_meta->path = filename;
 		t_meta->t_id = t_id;
+
 		if(gby_id ==  -1){
 			t_meta->hasAggKey = false;
 		}
@@ -193,9 +195,11 @@ public:
 			t_meta->hasAggKey = true;
 		}
 
-		partitioner = new Partitioner(filename, part_size);
-		t_meta->num_of_parts = partitioner->getNumberOfParts();
 		this->scale_factor = sf;
+		this->join_rw = join_rw;
+
+		partitioner = new Partitioner();
+		t_meta->num_of_parts = partitioner->roundRobin(filename, part_size);
 	}
 
 	//Copy constructor
@@ -247,7 +251,7 @@ public:
 			}
 			delete[] col->data;
 			delete[] col->compressed;
-			if(col->c_meta.isFK && col->c_meta.coPart){
+			if(col->c_meta.isFK && col->c_meta.coPart && this->join_rw){
 				delete[] col->co_partitioned.left_partition;
 				delete[] col->co_partitioned.right_partition;
 			}
@@ -258,6 +262,7 @@ public:
 	}
 
 	void createTableMeta(bool);
+	void parseMicroBenchTable();
 	void parseDimensionTable();
 	void parseFactTable(unordered_map<int, column*> &, unordered_map<int, int> &);
 	void parseFactTable(unordered_map<int, DataCompressor*> &, unordered_map<int, int> &);

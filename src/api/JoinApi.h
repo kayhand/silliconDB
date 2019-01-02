@@ -44,26 +44,32 @@ private:
 
 	JOB_TYPE j_type;
 	bool co_part = false;
+	bool join_rw = false;
 
 	void reserveBitVector() {
 		this->block_size = factTable->t_meta.num_of_segments * 8;
 		posix_memalign(&join_vector, 4096, block_size);
-		if(this->co_part){
-			int size = 4;
-			join_vectors.reserve(size);
+		if(co_part & join_rw){
+			reserveSubVectors();
+			printf("join_rw approach!\n");
+		}
+	}
 
-			for(int i = 0; i < size; i++){
-				void *cp_vector;
-				posix_memalign(&cp_vector, 4096, block_size);
-				join_vectors.push_back(cp_vector);
-			}
+	void reserveSubVectors(){
+		int size = 4;
+		join_vectors.reserve(size);
+
+		for(int i = 0; i < size; i++){
+			void *cp_vector;
+			posix_memalign(&cp_vector, 4096, block_size);
+			join_vectors.push_back(cp_vector);
 		}
 	}
 
 	friend class AggApi;
 
 public:
-	JoinApi(table *factTable, ScanApi *dimScan, int joinColId, JOB_TYPE j_type) {
+	JoinApi(table *factTable, ScanApi *dimScan, int joinColId, JOB_TYPE j_type, bool coPart, bool joinRw) {
 		this->factTable = factTable;
 		this->dimensionScan = dimScan;
 		this->joinColId = joinColId;
@@ -72,15 +78,15 @@ public:
 		this->num_of_columns = factTable->t_meta.num_of_columns;
 		this->segs_per_part = factTable->t_meta.num_of_segments / factTable->t_meta.num_of_parts;
 
-		this->co_part = factTable->columns[joinColId].c_meta.coPart;
-		//this->co_part = false;
+		this->co_part = coPart;
+		this->join_rw = joinRw;
 
 		initializeJoin();
 	}
 
 	~JoinApi() {
 		free(join_vector);
-		if(this->co_part){
+		if(this->co_part & this->join_rw){
 			for(void* cp_vector : join_vectors){
 				free(cp_vector);
 			}
@@ -99,7 +105,7 @@ public:
 		memset(&dst, 0, sizeof(dax_vec_t));
 
 		src.elem_width = (&factTable->columns[joinColId])->encoder.num_of_bits + 1;
-		if(co_part)
+		if(co_part && join_rw)
 		    src.elem_width /= 2;
 		src.format = DAX_BITS;
 
@@ -221,7 +227,8 @@ public:
 		return result;
 	}
 
-	/*uint8_t bytes_to_bits(uint64_t val){
+	/*
+	uint8_t bytes_to_bits(uint64_t val){
 		uint8_t condensed_vec[8];
 		uint8_t return_val;
 		condensed_vec = (uint8_t *) val;
@@ -241,6 +248,10 @@ public:
 
 	JOB_TYPE &JoinType(){
 		return j_type;
+	}
+
+	bool isCoPartitioned(){
+		return this->co_part;
 	}
 
 };

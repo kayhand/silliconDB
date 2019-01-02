@@ -29,8 +29,10 @@ std::unordered_map<string, string> params{
 	{"dax_queue_size", "4"},
 	{"sf", "1"},
 	{"scheduling", "operator_at_a_time"},
-	{"query_path", "/export/home/demo/silliconDB/src/bench/scripts/ssb/"},
-	{"q_id", "3_1.txt"}
+	{"query_path", "/export/home/demo/silliconDB/src/bench/scripts/"},
+	{"q_id", "ssb/3_1.txt"},
+	{"join_rw", "off"},
+	{"agg_rw", "off"}
 };
 
 void setParams(int argc, char **argv){
@@ -64,6 +66,17 @@ void setParams(int argc, char **argv){
 	printf("+++++++++++++++++++++\n\n");
 }
 
+EXEC_TYPE assignSchedApproach(string technique){
+	EXEC_TYPE e_type;
+	if(technique == "siliconDB")
+		e_type = SDB;
+	else if(technique == "data_division")
+		e_type = DD;
+	else
+		e_type = OAT;
+	return e_type;
+}
+
 int main(int argc, char** argv) {
 	if(argc == 1){
 		printf("\nNo parameters specified, will start with default paramaters!\n\n");
@@ -83,12 +96,17 @@ int main(int argc, char** argv) {
 	string dataPath = params["data_path"];
 	string technique = params["scheduling"]; // 0: sDB, 1: op_at_a_time, 2: data division
 	string run_type = params["run_type"];
+	bool join_rw = (params["join_rw"] == "on") ? true : false;
 
-	cout << "technique: " << technique << endl;
+	EXEC_TYPE e_type = assignSchedApproach(technique);
+	if(join_rw)
+		e_type = (EXEC_TYPE) ((int) e_type | (int) JOIN_RW);
+
+	cout << "technique: " << technique << " (" << e_type << ") " << endl;
 
 	DataLoader dataLoader;
 	dataLoader.parseQuery(queryFile);
-	dataLoader.processTables(dataPath, part_size, sf, run_type);
+	dataLoader.processTables(dataPath, part_size, sf, run_type, join_rw);
 
 	//dataLoader.initializeDataCompressors(dataPath, part_size, sf);
 	//dataLoader.parseTables();
@@ -113,10 +131,10 @@ int main(int argc, char** argv) {
 	int num_of_barriers = workers + 1;
 	Syncronizer thr_sync;
 	thr_sync.initBarriers(num_of_barriers);
-	thr_sync.initAggCounter(dataLoader.TotalFactParts());
+	thr_sync.initAggCounter(dataLoader.TotalFactParts() * sf);
 
 	for (int i = 0; i < 1; i++) {
-		ProcessingUnit *proc_unit = new ProcessingUnit(workers, technique, &dataLoader);
+		ProcessingUnit *proc_unit = new ProcessingUnit(workers, e_type, &dataLoader);
 
 		proc_unit->initializeAPI(dataLoader.getQueryParser());
 		proc_unit->createProcessingUnit(&thr_sync, dax_queue_size);

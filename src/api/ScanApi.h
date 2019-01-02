@@ -191,9 +191,10 @@ public:
 		return this->num_of_segments;
 	}
 
-//#ifdef __sun
+
 	bool hwScan(dax_queue_t**, Node<Query>*);
-//#endif
+	void hwScanQT(dax_queue_t**, Node<Query>*, Result*);
+
 	bool simdScan(Node<Query>* node, Result *result){
 		int curPart = node->value.getPart();
 		int ind = colId + (curPart) * baseTable->t_meta.num_of_columns;
